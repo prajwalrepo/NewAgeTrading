@@ -13,7 +13,7 @@
 # 6) Exit on LSL / trailing stop / max-profit logic.
 # =============================================================================
 
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta, timezone
 import os
 import re
 import threading
@@ -89,6 +89,14 @@ CONFIG = {
     # When enabled, only Supertrend direction flips control entries and exits.
     "only_supertrend": False,
 
+    # Trading schedule in IST
+    "trading_timezone_offset_minutes": 330,
+    "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    "entry_window_start": "17:30",
+    "entry_window_end": "22:30",
+    "force_exit_time": "22:30",
+    "expiry_day_force_exit_time": "22:00",
+
     # Risk
     "lot_size": 10,
     "max_lots_per_trade": 1,
@@ -110,17 +118,7 @@ CONFIG = {
     "exit_order_cooldown_sec": 90,
 
     "DEBUG": False,
-
-    # Notification config
-    "notification_email_enabled": False,
-    "EMAIL_USER": "",
-    "EMAIL_PASSWORD": "",
-    "EMAIL_TO": [],
-    "smtp_host": "smtp.gmail.com",
-    "smtp_port": 587,
-    "smtp_use_tls": True,
-    "log_dir": "logs",
-    "log_file_prefix": "OILMINI",
+    "debug_signal_tracking_enabled": True,
 }
 
 CANDLE_INTERVAL_MAP = {
@@ -131,15 +129,87 @@ CANDLE_INTERVAL_MAP = {
 }
 
 
+def _normalize_access_token(token_value):
+    if isinstance(token_value, str):
+        token = token_value.strip()
+        if token:
+            return token
+        raise ValueError("Empty access token")
+    if isinstance(token_value, dict):
+        for key in ("access_token", "token", "jwt", "value"):
+            val = token_value.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        for nested in (token_value.get("data"), token_value.get("payload")):
+            if isinstance(nested, dict):
+                return _normalize_access_token(nested)
+    if isinstance(token_value, (list, tuple)):
+        for item in token_value:
+            try:
+                return _normalize_access_token(item)
+            except Exception:
+                continue
+    raise ValueError(f"Unsupported access token format: {type(token_value).__name__}")
+
+
+def _extract_candle_rows(raw_response):
+    if isinstance(raw_response, dict):
+        for key in ("candles", "data", "payload"):
+            value = raw_response.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                nested = _extract_candle_rows(value)
+                if nested is not None:
+                    return nested
+    elif isinstance(raw_response, list):
+        return raw_response
+    return None
+
+
+def _extract_margin_value(raw_response):
+    if isinstance(raw_response, dict):
+        for key in (
+            "available_margin",
+            "margin_available",
+            "mis_balance_available",
+            "future_balance_available",
+            "net_margin",
+            "balance",
+            "available_cash",
+        ):
+            if key in raw_response:
+                try:
+                    return float(raw_response[key])
+                except (TypeError, ValueError):
+                    continue
+        for value in raw_response.values():
+            nested = _extract_margin_value(value)
+            if nested is not None:
+                return nested
+    elif isinstance(raw_response, list):
+        for item in raw_response:
+            nested = _extract_margin_value(item)
+            if nested is not None:
+                return nested
+    elif isinstance(raw_response, (int, float, str)):
+        try:
+            return float(raw_response)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _init_groww_api():
     if not CONFIG.get("api_key") or not CONFIG.get("api_secret"):
         print("[WARN] API keys are empty. Fill CONFIG['api_key'] and CONFIG['api_secret'] before live trading.")
         return None
     try:
-        access_token = GrowwAPI.get_access_token(
+        raw_access_token = GrowwAPI.get_access_token(
             api_key=CONFIG["api_key"],
             secret=CONFIG["api_secret"],
         )
+        access_token = _normalize_access_token(raw_access_token)
         return GrowwAPI(access_token)
     except Exception as exc:
         print(f"[ERROR] Authentication failed: {exc}")
@@ -161,48 +231,117 @@ trades_today_pe = 0
 exit_attempt_tracker = {}
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 last_option_signal_candle = {}
+debug_signal_positions = {}
 last_max_profit_check_at = {}
+loop_candle_cache = {}
+loop_price_cache = {}
 
 
-class DailyTeeStdout:
-    def __init__(self, base_stdout, log_dir, file_prefix):
-        self.base_stdout = base_stdout
-        self.log_dir = log_dir
-        self.file_prefix = file_prefix
-        self._lock = threading.Lock()
-        self._current_date = None
-        self._fh = None
-        os.makedirs(self.log_dir, exist_ok=True)
-
-    def _get_date_text(self):
-        return datetime.now().strftime("%Y-%m-%d")
-
-    def get_log_path_for_date(self, date_text):
-        return os.path.join(self.log_dir, f"{self.file_prefix}-{date_text}.log")
-
-    def _ensure_file(self):
-        today = self._get_date_text()
-        if self._current_date != today:
-            if self._fh is not None:
-                self._fh.flush()
-                self._fh.close()
-            self._current_date = today
-            self._fh = open(self.get_log_path_for_date(today), "a", encoding="utf-8")
-
-    def write(self, data):
-        with self._lock:
-            self._ensure_file()
-            self.base_stdout.write(data)
-            self._fh.write(data)
-
-    def flush(self):
-        with self._lock:
-            self.base_stdout.flush()
-            if self._fh is not None:
-                self._fh.flush()
+WEEKDAY_NAME_TO_INT = {
+    "MONDAY": 0,
+    "TUESDAY": 1,
+    "WEDNESDAY": 2,
+    "THURSDAY": 3,
+    "FRIDAY": 4,
+    "SATURDAY": 5,
+    "SUNDAY": 6,
+}
 
 
-tee_stdout = None
+def clear_loop_market_cache():
+    loop_candle_cache.clear()
+    loop_price_cache.clear()
+
+
+def _get_cached_candles(cache_key):
+    cached = loop_candle_cache.get(cache_key)
+    if cached is None:
+        return None
+    return cached.copy(), None
+
+
+def _set_cached_candles(cache_key, df):
+    if df is not None:
+        loop_candle_cache[cache_key] = df.copy()
+
+
+def _get_cached_price(symbol):
+    return loop_price_cache.get(symbol)
+
+
+def _set_cached_price(symbol, price):
+    if price is not None:
+        loop_price_cache[symbol] = float(price)
+
+
+def get_trading_now():
+    offset_minutes = int(CONFIG.get("trading_timezone_offset_minutes", 330) or 330)
+    return datetime.now(timezone(timedelta(minutes=offset_minutes)))
+
+
+def _parse_hhmm(value):
+    return datetime.strptime(str(value or "00:00").strip(), "%H:%M").time()
+
+
+def _get_allowed_weekdays():
+    configured = CONFIG.get("trading_weekdays", []) or []
+    allowed = set()
+    for item in configured:
+        if isinstance(item, int):
+            allowed.add(int(item))
+        else:
+            mapped = WEEKDAY_NAME_TO_INT.get(str(item).strip().upper())
+            if mapped is not None:
+                allowed.add(mapped)
+    return allowed
+
+
+def get_selected_option_expiry_date():
+    for side in ("CE", "PE"):
+        contracts = contract_universe.get(side) or []
+        if contracts:
+            expiry_dt = _parse_expiry_fs_date(contracts[0].get("expiry_fs"))
+            if expiry_dt is not None:
+                return expiry_dt.date()
+    return None
+
+
+def get_session_state(now_dt=None):
+    now_dt = now_dt or get_trading_now()
+    allowed_weekdays = _get_allowed_weekdays()
+    if allowed_weekdays and now_dt.weekday() not in allowed_weekdays:
+        return "closed_day"
+
+    current_time = dt_time(now_dt.hour, now_dt.minute, now_dt.second)
+    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "17:30"))
+    entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "22:30"))
+    force_exit = _parse_hhmm(CONFIG.get("force_exit_time", "22:30"))
+
+    expiry_date = get_selected_option_expiry_date()
+    if expiry_date is not None and now_dt.date() == expiry_date:
+        force_exit = _parse_hhmm(CONFIG.get("expiry_day_force_exit_time", "22:00"))
+        if entry_end > force_exit:
+            entry_end = force_exit
+
+    if current_time < entry_start:
+        return "pre_open"
+    if current_time < entry_end:
+        return "entry"
+    if current_time < force_exit:
+        return "manage_only"
+    return "squareoff"
+
+
+def close_all_open_positions(reason):
+    for symbol, pos in list(positions.items()):
+        if pos.get("status") != "OPEN":
+            continue
+        exit_price = fetch_latest_price_1m(symbol) or pos.get("entry_price", 0)
+        if exit_price is None:
+            continue
+        place_sell_order(symbol, pos.get("order_symbol"), float(exit_price), reason=reason, qty=pos.get("qty"))
+
+    debug_signal_positions.clear()
 
 
 def _parse_expiry_fs_date(expiry_fs_text):
@@ -360,6 +499,15 @@ def _resolve_segment_constant(segment_name):
     if not segment_name:
         return None
     value = str(segment_name).strip().upper()
+    aliases = {
+        "COMMODITY": "SEGMENT_COMMODITY",
+        "COMM": "SEGMENT_COMMODITY",
+        "MCX": "SEGMENT_COMMODITY",
+        "FNO": "SEGMENT_FNO",
+        "NFO": "SEGMENT_FNO",
+        "NSE_FNO": "SEGMENT_FNO",
+    }
+    value = aliases.get(value, value)
     if not value.startswith("SEGMENT_"):
         value = f"SEGMENT_{value}"
     return getattr(growwapi, value, None) if growwapi is not None else None
@@ -447,28 +595,43 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
     groww_symbol = symbol if symbol.startswith(f"{exchange}-") else f"{exchange}-{symbol}"
     end_time = datetime.now()
     segment_const = _resolve_segment_constant(segment_name)
+    exchange_const = getattr(growwapi, f"EXCHANGE_{exchange}", None)
+    interval_key = CANDLE_INTERVAL_MAP.get(interval_str)
+    if exchange_const is None:
+        return None, f"Unknown exchange constant: EXCHANGE_{exchange}"
+    if segment_const is None:
+        return None, f"Unknown segment constant: {segment_name}"
+    if interval_key is None:
+        return None, f"Unknown candle interval: {interval_str}"
+
+    cache_key = (groww_symbol, segment_name, int(lookback_minutes), interval_key)
+    cached_df, cached_err = _get_cached_candles(cache_key)
+    if cached_df is not None:
+        return cached_df, cached_err
 
     for lookback in [int(lookback_minutes), max(int(lookback_minutes), 24 * 60), max(int(lookback_minutes), 3 * 24 * 60)]:
         start_time = end_time - timedelta(minutes=lookback)
         try:
             raw = growwapi.get_historical_candles(
                 groww_symbol=groww_symbol,
-                exchange=getattr(growwapi, f"EXCHANGE_{exchange}"),
+                exchange=exchange_const,
                 segment=segment_const,
-                candle_interval=CANDLE_INTERVAL_MAP[interval_str],
+                candle_interval=interval_key,
                 start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                timeout=int(CONFIG.get("api_timeout_seconds", 10)),
             )
-            if isinstance(raw, dict) and raw.get("candles"):
-                df = _build_dataframe(raw["candles"])
+            candles = _extract_candle_rows(raw)
+            if candles:
+                df = _build_dataframe(candles)
                 if df is not None and not df.empty:
                     df = df[df["date"] <= pd.Timestamp(datetime.now())].reset_index(drop=True)
                     if len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
+                        _set_cached_candles(cache_key, df)
                         return df, None
         except Exception as exc:
             if "rate limit" in str(exc).lower():
-                time.sleep(5)
-                continue
+                return None, f"{type(exc).__name__}: {exc}"
             return None, f"{type(exc).__name__}: {exc}"
     return None, "Insufficient commodity candle data"
 
@@ -476,6 +639,9 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
 def fetch_latest_price_1m(symbol):
     if growwapi is None:
         return None
+    cached_price = _get_cached_price(symbol)
+    if cached_price is not None:
+        return cached_price
     exchange = CONFIG.get("exchange", "MCX")
     groww_symbol = symbol if symbol.startswith(f"{exchange}-") else f"{exchange}-{symbol}"
     try:
@@ -487,14 +653,17 @@ def fetch_latest_price_1m(symbol):
             candle_interval="1minute",
             start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
             end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timeout=int(CONFIG.get("api_timeout_seconds", 10)),
         )
-        if isinstance(raw, dict) and raw.get("candles"):
-            df = _build_dataframe(raw["candles"])
+        candles = _extract_candle_rows(raw)
+        if candles:
+            df = _build_dataframe(candles)
             if not df.empty:
-                return float(df["close"].iloc[-1])
+                price = float(df["close"].iloc[-1])
+                _set_cached_price(symbol, price)
+                return price
     except Exception as exc:
-        if CONFIG.get("DEBUG"):
-            print(f"[DEBUG] fetch_latest_price_1m error for {symbol}: {exc}")
+        print(f"[CANDLE ERROR] {symbol}: {type(exc).__name__}: {exc}")
     return None
 
 
@@ -561,35 +730,67 @@ def select_atm_contract(side, index_price):
     contracts = contract_universe.get(side, [])
     if not contracts:
         return None
-    return sorted(contracts, key=lambda c: (abs(c["strike"] - index_price), -c["strike"]))[0]
+    return min(contracts, key=lambda c: (abs(c["strike"] - index_price), -c["strike"]))
+
+
+def get_contract_for_symbol(candle_symbol, fallback_side=None, fallback_order_symbol=None, fallback_strike=None):
+    side = fallback_side or candle_to_side.get(candle_symbol)
+    if side in contract_universe:
+        for contract in contract_universe.get(side, []):
+            if contract.get("candle_symbol") == candle_symbol:
+                return contract
+    return {
+        "candle_symbol": candle_symbol,
+        "order_symbol": fallback_order_symbol or candle_to_order.get(candle_symbol),
+        "strike": fallback_strike,
+        "side": side,
+    }
+
+
+def get_tracked_contracts():
+    tracked = []
+    seen = set()
+
+    for candle_symbol, pos in positions.items():
+        if pos.get("status") != "OPEN" or candle_symbol in seen:
+            continue
+        tracked.append(
+            get_contract_for_symbol(
+                candle_symbol,
+                fallback_side=pos.get("side"),
+                fallback_order_symbol=pos.get("order_symbol"),
+                fallback_strike=pos.get("strike"),
+            )
+        )
+        seen.add(candle_symbol)
+
+    if CONFIG.get("debug_signal_tracking_enabled", False):
+        for candle_symbol, debug_pos in debug_signal_positions.items():
+            if candle_symbol in seen:
+                continue
+            tracked.append(
+                get_contract_for_symbol(
+                    candle_symbol,
+                    fallback_side=debug_pos.get("side"),
+                    fallback_order_symbol=debug_pos.get("order_symbol"),
+                    fallback_strike=debug_pos.get("strike"),
+                )
+            )
+            seen.add(candle_symbol)
+
+    return tracked
 
 
 def get_underlying_reference_price():
     future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
     future_selected = _select_nearest_expiry(future_entries)
+    if future_selected is None:
+        return None
 
-    candidate_symbols = [
-        "CRUDEOILM",
-        "MCX-CRUDEOILM",
-    ]
-    if future_selected is not None:
-        candidate_symbols.extend([
-            build_future_candle_symbol(future_selected["candle_expiry"]),
-            build_future_order_symbol(future_selected["order_expiry"]),
-            f"MCX-{build_future_candle_symbol(future_selected['candle_expiry'])}",
-        ])
-
-    for symbol in candidate_symbols:
-        price = fetch_latest_price_1m(symbol)
-        if price is not None:
-            return float(price)
-
-    for side in ("CE", "PE"):
-        for rec in contract_universe.get(side, []):
-            df, err = fetch_recent_candles(rec["candle_symbol"], CONFIG.get("segment", "SEGMENT_COMMODITY"))
-            if df is not None and not df.empty and len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
-                return float(df["close"].iloc[-1])
-    return None
+    # Use the dated futures candle symbol selected at startup. Probing several
+    # aliases on every cycle quickly exhausts the Groww request limit.
+    future_symbol = build_future_candle_symbol(future_selected["candle_expiry"])
+    return fetch_latest_price_1m(future_symbol)
 
 
 def option_has_flip_buy_signal(candle_symbol, idx_time):
@@ -631,7 +832,13 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
         CONFIG.get("only_supertrend", False)
         and is_new_closed_candle
         and fresh_flip_down
-        and positions.get(candle_symbol, {}).get("status") == "OPEN"
+        and (
+            positions.get(candle_symbol, {}).get("status") == "OPEN"
+            or (
+                CONFIG.get("debug_signal_tracking_enabled", False)
+                and candle_symbol in debug_signal_positions
+            )
+        )
     ):
         signal = "SELL"
     else:
@@ -642,6 +849,8 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
 def print_future_snapshot(future_symbol, idx_time=None):
     df, err = fetch_recent_candles(future_symbol, CONFIG.get("segment", "SEGMENT_COMMODITY"))
     if df is None or df.empty or len(df) < int(CONFIG.get("atr_period") or 10) + 2:
+        if err:
+            print(f"[CANDLE DATA] {future_symbol}: {err}")
         print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
         return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
 
@@ -663,6 +872,7 @@ def print_future_snapshot(future_symbol, idx_time=None):
 def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = option_has_flip_buy_signal(candle_symbol, idx_time)
     if last_price is None:
+        print(f"[CANDLE DATA] {candle_symbol}: no usable candle data")
         print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA")
         return {"ok": ok, "last_price": None, "entry_open": entry_open, "entry_low": entry_low, "st_value": st_value, "opt_trend": opt_trend, "signal": signal, "candle_symbol": candle_symbol, "side": side, "strike": strike}
 
@@ -706,12 +916,9 @@ def get_available_margin():
         resp = growwapi.get_available_margin_details()
         if not isinstance(resp, dict):
             return None
-        fno = resp.get("fno_margin_details", {})
-        if "future_balance_available" in fno:
-            return float(fno["future_balance_available"])
-        eq = resp.get("equity_margin_details", {})
-        if "mis_balance_available" in eq:
-            return float(eq["mis_balance_available"])
+        margin_value = _extract_margin_value(resp)
+        if margin_value is not None:
+            return margin_value
     except Exception as exc:
         print(f"[ERROR] Failed to fetch margin: {type(exc).__name__}: {exc}")
     return None
@@ -773,10 +980,14 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
             print("[SKIP] Margin unavailable")
             return None
 
-        available_margin = min(float(CONFIG.get("allocation_per_trade", 0)), margin or float(CONFIG.get("allocation_per_trade", 0)))
+        allocation = float(CONFIG.get("allocation_per_trade", 0) or 0)
+        available_margin = min(allocation, margin) if margin is not None else allocation
         min_cost = lot_size * price
         if available_margin < min_cost:
-            print(f"[SKIP] Insufficient margin. Need {min_cost:.2f}")
+            print(
+                f"[BUY BLOCKED] {candle_symbol}: insufficient margin. "
+                f"Need {min_cost:.2f}, available {available_margin:.2f}"
+            )
             return None
 
         qty = max(int(available_margin / (lot_size * price)), 1) * lot_size
@@ -832,10 +1043,7 @@ def check_lsl_exit(symbol):
     return cur <= (entry_low + loss_stop_points)
 
 
-def update_trailing_stop_and_check(symbol, current_price):
-    if symbol not in positions or positions[symbol].get("status") != "OPEN":
-        return False
-    pos = positions[symbol]
+def _update_trailing_stop_for_record(pos, current_price):
     entry = float(pos.get("entry_price", 0) or 0)
     if entry <= 0:
         return False
@@ -858,6 +1066,19 @@ def update_trailing_stop_and_check(symbol, current_price):
         if current_price <= new_tsl:
             return True
     return False
+
+
+def update_trailing_stop_and_check(symbol, current_price):
+    if symbol not in positions or positions[symbol].get("status") != "OPEN":
+        return False
+    return _update_trailing_stop_for_record(positions[symbol], current_price)
+
+
+def update_debug_trailing_stop_and_check(symbol, current_price):
+    pos = debug_signal_positions.get(symbol)
+    if not pos:
+        return False
+    return _update_trailing_stop_for_record(pos, current_price)
 
 
 def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=None):
@@ -909,8 +1130,10 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 
 def live_signal_loop():
     last_printed_time = None
+    last_wait_log = 0.0
     while True:
         try:
+            clear_loop_market_cache()
             # Rebuild only when the contract universe is empty; otherwise keep the
             # selected expiry set fixed for the current run to avoid duplicate
             # startup logs and repeated expiry selection prints.
@@ -919,13 +1142,32 @@ def live_signal_loop():
                     time.sleep(30)
                     continue
 
+            now_ist = get_trading_now()
+            session_state = get_session_state(now_ist)
+            tracked_contracts = get_tracked_contracts()
+
+            if session_state == "squareoff":
+                close_all_open_positions("SESSION_SQUAREOFF")
+                time.sleep(30)
+                continue
+
+            if session_state in {"closed_day", "pre_open"}:
+                time.sleep(30)
+                continue
+
+            if session_state != "entry" and not tracked_contracts:
+                time.sleep(30)
+                continue
+
             future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
             future_selected = _select_nearest_expiry(future_entries) if future_entries else None
             future_symbol = build_future_candle_symbol(future_selected["candle_expiry"]) if future_selected else None
 
             underlying_price = get_underlying_reference_price()
             if underlying_price is None:
-                print("[WARN] Underlying CRUDEOILM price unavailable yet; retrying with fallback option scan")
+                if time.time() - last_wait_log >= 30:
+                    print("[WARN] Underlying CRUDEOILM price unavailable; retrying in 30 seconds")
+                    last_wait_log = time.time()
                 time.sleep(30)
                 continue
 
@@ -934,7 +1176,7 @@ def live_signal_loop():
                 print_future_snapshot(future_symbol)
 
             atm = select_atm_contract("CE", underlying_price)
-            if atm is None:
+            if atm is None and not tracked_contracts:
                 time.sleep(30)
                 continue
 
@@ -945,18 +1187,55 @@ def live_signal_loop():
             last_printed_time = idx_time
             update_cooldowns_once_per_cycle()
 
-            for side in ("CE", "PE"):
-                contract = next((c for c in contract_universe[side] if c["strike"] == atm["strike"]), None)
-                if contract is None:
-                    continue
+            if tracked_contracts:
+                contracts_to_monitor = tracked_contracts
+            else:
+                contracts_to_monitor = []
+                for side in ("CE", "PE"):
+                    contract = next((c for c in contract_universe[side] if c["strike"] == atm["strike"]), None)
+                    if contract is not None:
+                        contracts_to_monitor.append(contract)
+
+            for contract in contracts_to_monitor:
+                side = contract.get("side")
                 signal_symbol = contract["candle_symbol"]
-                snapshot = print_flat_market_snapshot(signal_symbol, side, idx_time, atm["strike"])
+                snapshot = print_flat_market_snapshot(signal_symbol, side, idx_time, contract.get("strike"))
                 ok = bool(snapshot.get("ok"))
 
                 open_position = positions.get(signal_symbol)
+                debug_position = debug_signal_positions.get(signal_symbol)
+                tracked_position = open_position or debug_position
+
+                if debug_position and not open_position:
+                    current_price = fetch_latest_price_1m(signal_symbol) or snapshot.get("last_price")
+                    entry_price = float(debug_position.get("entry_price", 0) or 0)
+                    if current_price is not None:
+                        max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
+                        if (
+                            bool(CONFIG.get("max_profit_booking_enabled", True))
+                            and entry_price > 0
+                            and max_profit_points > 0
+                            and float(current_price) >= entry_price + max_profit_points
+                        ):
+                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=MX +{max_profit_points:g}")
+                            debug_signal_positions.pop(signal_symbol, None)
+                            continue
+
+                        entry_low = float(debug_position.get("entry_candle_low", debug_position.get("entry_candle_open", entry_price)) or 0)
+                        loss_stop_points = float(CONFIG.get("loss_stop_points", 0) or 0)
+                        if entry_low > 0 and float(current_price) <= entry_low + loss_stop_points:
+                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=LSL")
+                            debug_signal_positions.pop(signal_symbol, None)
+                            continue
+
+                        if CONFIG.get("trailing_stop_enabled", True) and update_debug_trailing_stop_and_check(signal_symbol, float(current_price)):
+                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=TSL")
+                            debug_signal_positions.pop(signal_symbol, None)
+                            continue
+
                 if (
-                    open_position
-                    and open_position.get("status") == "OPEN"
+                    tracked_position
+                    and (not open_position or open_position.get("status") == "OPEN")
                     and (
                         snapshot.get("signal") == "SELL"
                         if CONFIG.get("only_supertrend", False)
@@ -966,23 +1245,35 @@ def live_signal_loop():
                     exit_price = fetch_latest_price_1m(signal_symbol) or snapshot.get("last_price")
                     if exit_price is not None:
                         print(
-                            f"[{idx_time}] [SELL SIGNAL] CRUDEOILM {side} "
+                            f"[{idx_time}] [{'DEBUG ' if not open_position else ''}SELL SIGNAL] CRUDEOILM {side} "
                             f"{signal_symbol} Direction changed to down"
                         )
-                        place_sell_order(
-                            signal_symbol,
-                            open_position.get("order_symbol"),
-                            float(exit_price),
-                            reason="DIRECTION_CHANGE",
-                            qty=open_position.get("qty"),
-                        )
+                        if open_position:
+                            place_sell_order(signal_symbol, open_position.get("order_symbol"), float(exit_price), reason="DIRECTION_CHANGE", qty=open_position.get("qty"))
+                        else:
+                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={debug_position['entry_price']:.2f} ExitPrice={float(exit_price):.2f}")
+                            debug_signal_positions.pop(signal_symbol, None)
 
-                if ok and snapshot.get("signal") == "BUY":
+                if session_state == "entry" and (not tracked_position) and ok and snapshot.get("signal") == "BUY":
                     order_symbol = contract["order_symbol"]
                     close_price = snapshot.get("last_price")
                     entry_open = snapshot.get("entry_open")
                     entry_low = snapshot.get("entry_low")
                     print(f"[{idx_time}] [SIGNAL] CRUDEOILM {side} {signal_symbol} Close={close_price:.2f} ST={snapshot.get('st_value') if snapshot.get('st_value') is not None else 'NA'}")
+                    if CONFIG.get("debug_signal_tracking_enabled", False):
+                        debug_signal_positions[signal_symbol] = {
+                            "order_symbol": order_symbol,
+                            "side": side,
+                            "entry_price": float(close_price),
+                            "entry_time": idx_time,
+                            "entry_candle_open": float(entry_open),
+                            "entry_candle_low": float(entry_low),
+                            "highest_price": float(close_price),
+                            "trailing_sl_activated": False,
+                            "trailing_stop_price": float(close_price) - float(CONFIG.get("trailing_stop_loss_points", 8) or 8),
+                            "strike": contract.get("strike"),
+                        }
+                        print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {signal_symbol} OrderSymbol={order_symbol} Price={float(close_price):.2f} Side={side}")
                     place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low))
 
             for symbol in list(positions.keys()):
@@ -1040,14 +1331,6 @@ def live_signal_loop():
 
 
 def main():
-    global tee_stdout
-    tee_stdout = DailyTeeStdout(
-        base_stdout=os.sys.stdout,
-        log_dir=str(CONFIG.get("log_dir") or "logs"),
-        file_prefix=str(CONFIG.get("log_file_prefix") or "OILMINI"),
-    )
-    os.sys.stdout = tee_stdout
-
     if growwapi is None:
         print("[INFO] Script loaded in safe mode. Fill CONFIG values to enable live trading.")
         return

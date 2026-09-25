@@ -244,7 +244,7 @@ def clear_loop_market_cache():
 def _get_cached_candles(cache_key):
     cached = loop_candle_cache.get(cache_key)
     if cached is None:
-        return None
+        return None, None
     return cached.copy(), None
 
 
@@ -1514,6 +1514,7 @@ def wait_until_next_interval():
 
 def live_signal_loop():
     last_printed_time = None
+    last_session_state_logged = None
     # main() already builds the universe before printing startup details.
     # Treat that build as today's initialization to avoid printing it twice.
     last_reset_date = get_trading_now().strftime("%Y-%m-%d")
@@ -1546,6 +1547,19 @@ def live_signal_loop():
             reconcile_positions_with_groww(live_positions)
             tracked_symbols = get_tracked_candle_symbols(live_positions)
             session_state = get_session_state(now_ist)
+
+            if session_state != last_session_state_logged:
+                if session_state == "closed_day":
+                    print(f"[SESSION] Market closed today. Allowed days={CONFIG.get('trading_weekdays')} Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
+                elif session_state == "pre_open":
+                    print(f"[SESSION] Outside market hours. Trading starts at {CONFIG.get('entry_window_start')} IST. Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
+                elif session_state == "manage_only":
+                    print(f"[SESSION] Entry window closed at {CONFIG.get('entry_window_end')} IST. Managing open positions until {CONFIG.get('force_exit_time')} IST.")
+                elif session_state == "squareoff":
+                    print(f"[SESSION] Square-off window active at {CONFIG.get('force_exit_time')} IST. Closing open positions only.")
+                elif session_state == "entry":
+                    print(f"[SESSION] Trading window open: {CONFIG.get('entry_window_start')} - {CONFIG.get('entry_window_end')} IST.")
+                last_session_state_logged = session_state
 
             if session_state == "squareoff":
                 close_all_open_positions("SESSION_SQUAREOFF_15_30", now_ist.strftime("%Y-%m-%d %H:%M:%S"))

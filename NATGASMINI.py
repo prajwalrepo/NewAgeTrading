@@ -254,7 +254,7 @@ def clear_loop_market_cache():
 def _get_cached_candles(cache_key):
     cached = loop_candle_cache.get(cache_key)
     if cached is None:
-        return None
+        return None, None
     return cached.copy(), None
 
 
@@ -456,6 +456,22 @@ def _select_nearest_expiry(entries, now_dt=None):
     upcoming = [e for e in entries if e["expiry_dt"].date() >= today]
     pool = upcoming if upcoming else entries
     return min(pool, key=lambda e: abs((e["expiry_dt"].date() - today).days))
+
+
+def _select_aligned_future_expiry(future_entries, option_entry=None, now_dt=None):
+    if not future_entries:
+        return None
+
+    now_dt = now_dt or datetime.now()
+    if option_entry is None:
+        return _select_nearest_expiry(future_entries, now_dt=now_dt)
+
+    option_expiry_date = option_entry["expiry_dt"].date()
+    aligned = [entry for entry in future_entries if entry["expiry_dt"].date() >= option_expiry_date]
+    if aligned:
+        return min(aligned, key=lambda e: e["expiry_dt"].date())
+
+    return _select_nearest_expiry(future_entries, now_dt=now_dt)
 
 
 def build_candle_symbol(expiry_fs, strike, side):
@@ -685,14 +701,14 @@ def build_contract_universe():
     if not option_entries and CONFIG.get("option_symbols"):
         option_entries = _normalize_symbol_array(CONFIG["option_symbols"], "option")
 
-    future_selected = _select_nearest_expiry(future_entries) if future_entries else None
-    if future_selected is None:
-        print("[ERROR] No valid NATGASMINI futures expiry configured")
-        return False
-
     option_selected = _select_nearest_expiry(option_entries) if option_entries else None
     if option_selected is None:
         print("[ERROR] No valid NATGASMINI options expiry configured")
+        return False
+
+    future_selected = _select_aligned_future_expiry(future_entries, option_selected) if future_entries else None
+    if future_selected is None:
+        print("[ERROR] No valid NATGASMINI futures expiry configured")
         return False
 
     future_expiry_fs = future_selected.get("candle_expiry", future_selected.get("expiry_token"))
@@ -701,6 +717,7 @@ def build_contract_universe():
     order_expiry = option_selected.get("order_expiry", option_selected.get("expiry_token"))
 
     order_expiry_to_candle_expiry[order_expiry.upper()] = expiry_fs
+    print(f"[ALIGNMENT] Option expiry={expiry_fs} -> Future expiry={future_expiry_fs}")
     print(f"[FUTURE] Selected NATGASMINI future: candle={future_expiry_fs}, order={future_order_expiry}")
     print(f"[EXPIRY] Selected NATGASMINI options: candle={expiry_fs}, order={order_expiry}")
 
@@ -781,7 +798,9 @@ def get_tracked_contracts():
 
 def get_underlying_reference_price():
     future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-    future_selected = _select_nearest_expiry(future_entries)
+    option_entries = _normalize_expiry_entries("option_expiry_fs", "option_order_expiry")
+    option_selected = _select_nearest_expiry(option_entries)
+    future_selected = _select_aligned_future_expiry(future_entries, option_selected)
     if future_selected is None:
         return None
 
@@ -1129,6 +1148,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 def live_signal_loop():
     last_printed_time = None
     last_wait_log = 0.0
+    last_session_state_logged = None
     while True:
         try:
             clear_loop_market_cache()
@@ -1143,6 +1163,19 @@ def live_signal_loop():
             now_ist = get_trading_now()
             session_state = get_session_state(now_ist)
             tracked_contracts = get_tracked_contracts()
+
+            if session_state != last_session_state_logged:
+                if session_state == "closed_day":
+                    print(f"[SESSION] Market closed today. Allowed days={CONFIG.get('trading_weekdays')} Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
+                elif session_state == "pre_open":
+                    print(f"[SESSION] Outside market hours. Trading starts at {CONFIG.get('entry_window_start')} IST. Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
+                elif session_state == "manage_only":
+                    print(f"[SESSION] Entry window closed at {CONFIG.get('entry_window_end')} IST. Managing open positions until {CONFIG.get('force_exit_time')} IST.")
+                elif session_state == "squareoff":
+                    print(f"[SESSION] Square-off window active at {CONFIG.get('force_exit_time')} IST. Closing open positions only.")
+                elif session_state == "entry":
+                    print(f"[SESSION] Trading window open: {CONFIG.get('entry_window_start')} - {CONFIG.get('entry_window_end')} IST.")
+                last_session_state_logged = session_state
 
             if session_state == "squareoff":
                 close_all_open_positions("SESSION_SQUAREOFF")

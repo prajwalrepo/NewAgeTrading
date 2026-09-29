@@ -45,31 +45,38 @@ CONFIG = {
     "option_symbols": [],
 
     "future_expiry_fs": [
-        "19Oct26",
-        "19Nov26",
-        "18Dec26",
+        "26AUG26",
+        "25SEP26",
+        "27OCT26",
+        "24NOV26",
+        "28DEC26",
+        "25JAN27",
     ],
     "future_order_expiry": [
-        "19OCT",
-        "19NOV",
-        "18DEC",
+        "26AUG",
+        "25SEP",
+        "27OCT",
+        "24NOV",
+        "28DEC",
+        "25JAN",
     ],
     "option_expiry_fs": [
-        "15Oct26",
-        "17Nov26",
-        "16Dec26",
+        "18Sep26",
+        "19Oct26",
+        "19Nov26",
     ],
     "option_order_expiry": [
-        "15OCT",
-        "17NOV",
-        "16DEC",
+        "18SEP",
+        "19OCT",
+        "19NOV",
     ],
-    "expiry_fs": ["15Oct26", "17Nov26", "16Dec26"],
-    "order_expiry": ["15OCT", "17NOV", "16DEC"],
+    "expiry_fs": ["18Sep26", "19Oct26", "19Nov26"],
+    "order_expiry": ["18SEP", "19OCT", "19NOV"],
+    "option_expiry_window_trading_days": 7,
 
     "strike_step": 50,
     "strike_start": 5000,
-    "strike_end": 12000,
+    "strike_end": 8000,
 
     "candle_interval": "1M",
     "atr_period": 10,
@@ -161,36 +168,23 @@ def _extract_candle_rows(raw_response):
     return None
 
 
-def _extract_margin_value(raw_response):
-    if isinstance(raw_response, dict):
-        for key in (
-            "available_margin",
-            "margin_available",
-            "mis_balance_available",
-            "future_balance_available",
-            "net_margin",
-            "balance",
-            "available_cash",
-        ):
-            if key in raw_response:
-                try:
-                    return float(raw_response[key])
-                except (TypeError, ValueError):
-                    continue
-        for value in raw_response.values():
-            nested = _extract_margin_value(value)
-            if nested is not None:
-                return nested
-    elif isinstance(raw_response, list):
-        for item in raw_response:
-            nested = _extract_margin_value(item)
-            if nested is not None:
-                return nested
-    elif isinstance(raw_response, (int, float, str)):
+def _extract_margin_value(raw_response, segment_key):
+    if not isinstance(raw_response, dict):
+        return None
+    segment = raw_response.get(segment_key)
+    if not isinstance(segment, dict):
+        return None
+    for key in (
+        "future_balance_available",
+        "option_buying_power",
+        "available_margin",
+        "margin_available",
+    ):
         try:
-            return float(raw_response)
+            if key in segment:
+                return float(segment[key])
         except (TypeError, ValueError):
-            return None
+            continue
     return None
 
 
@@ -382,6 +376,29 @@ def _normalize_expiry_entries(expiry_key="expiry_fs", order_key="order_expiry"):
     return entries
 
 
+def get_option_expiry_window_status(now_dt=None):
+    now_dt = now_dt or get_trading_now()
+    today = now_dt.date()
+    upcoming_expiries = sorted(
+        entry["expiry_dt"].date()
+        for entry in _normalize_expiry_entries("option_expiry_fs", "option_order_expiry")
+        if entry["expiry_dt"].date() >= today
+    )
+    if not upcoming_expiries:
+        return None, None
+
+    expiry_date = upcoming_expiries[0]
+    allowed_weekdays = _get_allowed_weekdays() or set(range(5))
+    trading_days_remaining = 0
+    date_cursor = today
+    while date_cursor < expiry_date:
+        date_cursor += timedelta(days=1)
+        if date_cursor.weekday() in allowed_weekdays:
+            trading_days_remaining += 1
+
+    return expiry_date, trading_days_remaining
+
+
 def _parse_order_symbol_token(symbol_text, *, kind="future"):
     txt = str(symbol_text or "").strip().upper()
     if not txt:
@@ -452,22 +469,6 @@ def _select_nearest_expiry(entries, now_dt=None):
     upcoming = [e for e in entries if e["expiry_dt"].date() >= today]
     pool = upcoming if upcoming else entries
     return min(pool, key=lambda e: abs((e["expiry_dt"].date() - today).days))
-
-
-def _select_aligned_future_expiry(future_entries, option_entry=None, now_dt=None):
-    if not future_entries:
-        return None
-
-    now_dt = now_dt or datetime.now()
-    if option_entry is None:
-        return _select_nearest_expiry(future_entries, now_dt=now_dt)
-
-    option_expiry_date = option_entry["expiry_dt"].date()
-    aligned = [entry for entry in future_entries if entry["expiry_dt"].date() >= option_expiry_date]
-    if aligned:
-        return min(aligned, key=lambda e: e["expiry_dt"].date())
-
-    return _select_nearest_expiry(future_entries, now_dt=now_dt)
 
 
 def build_candle_symbol(expiry_fs, strike, side):
@@ -697,14 +698,14 @@ def build_contract_universe():
     if not option_entries and CONFIG.get("option_symbols"):
         option_entries = _normalize_symbol_array(CONFIG["option_symbols"], "option")
 
+    future_selected = _select_nearest_expiry(future_entries) if future_entries else None
+    if future_selected is None:
+        print("[ERROR] No valid CRUDEOILM futures expiry configured")
+        return False
+
     option_selected = _select_nearest_expiry(option_entries) if option_entries else None
     if option_selected is None:
         print("[ERROR] No valid CRUDEOILM options expiry configured")
-        return False
-
-    future_selected = _select_aligned_future_expiry(future_entries, option_selected) if future_entries else None
-    if future_selected is None:
-        print("[ERROR] No valid CRUDEOILM futures expiry configured")
         return False
 
     future_expiry_fs = future_selected.get("candle_expiry", future_selected.get("expiry_token"))
@@ -713,7 +714,6 @@ def build_contract_universe():
     order_expiry = option_selected.get("order_expiry", option_selected.get("expiry_token"))
 
     order_expiry_to_candle_expiry[order_expiry.upper()] = expiry_fs
-    print(f"[ALIGNMENT] Option expiry={expiry_fs} -> Future expiry={future_expiry_fs}")
     print(f"[FUTURE] Selected CRUDEOILM future: candle={future_expiry_fs}, order={future_order_expiry}")
     print(f"[EXPIRY] Selected CRUDEOILM options: candle={expiry_fs}, order={order_expiry}")
 
@@ -794,9 +794,7 @@ def get_tracked_contracts():
 
 def get_underlying_reference_price():
     future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-    option_entries = _normalize_expiry_entries("option_expiry_fs", "option_order_expiry")
-    option_selected = _select_nearest_expiry(option_entries)
-    future_selected = _select_aligned_future_expiry(future_entries, option_selected)
+    future_selected = _select_nearest_expiry(future_entries)
     if future_selected is None:
         return None
 
@@ -929,7 +927,7 @@ def get_available_margin():
         resp = growwapi.get_available_margin_details()
         if not isinstance(resp, dict):
             return None
-        margin_value = _extract_margin_value(resp)
+        margin_value = _extract_margin_value(resp, "commodity_margin_details")
         if margin_value is not None:
             return margin_value
     except Exception as exc:
@@ -1144,7 +1142,6 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 def live_signal_loop():
     last_printed_time = None
     last_wait_log = 0.0
-    last_session_state_logged = None
     while True:
         try:
             clear_loop_market_cache()
@@ -1160,19 +1157,6 @@ def live_signal_loop():
             session_state = get_session_state(now_ist)
             tracked_contracts = get_tracked_contracts()
 
-            if session_state != last_session_state_logged:
-                if session_state == "closed_day":
-                    print(f"[SESSION] Market closed today. Allowed days={CONFIG.get('trading_weekdays')} Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
-                elif session_state == "pre_open":
-                    print(f"[SESSION] Outside market hours. Trading starts at {CONFIG.get('entry_window_start')} IST. Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}")
-                elif session_state == "manage_only":
-                    print(f"[SESSION] Entry window closed at {CONFIG.get('entry_window_end')} IST. Managing open positions until {CONFIG.get('force_exit_time')} IST.")
-                elif session_state == "squareoff":
-                    print(f"[SESSION] Square-off window active at {CONFIG.get('force_exit_time')} IST. Closing open positions only.")
-                elif session_state == "entry":
-                    print(f"[SESSION] Trading window open: {CONFIG.get('entry_window_start')} - {CONFIG.get('entry_window_end')} IST.")
-                last_session_state_logged = session_state
-
             if session_state == "squareoff":
                 close_all_open_positions("SESSION_SQUAREOFF")
                 time.sleep(30)
@@ -1182,7 +1166,7 @@ def live_signal_loop():
                 time.sleep(30)
                 continue
 
-            if session_state != "entry" and not tracked_contracts:
+            if session_state not in {"entry", "manage_only"} and not tracked_contracts:
                 time.sleep(30)
                 continue
 
@@ -1233,33 +1217,6 @@ def live_signal_loop():
                 debug_position = debug_signal_positions.get(signal_symbol)
                 tracked_position = open_position or debug_position
 
-                if debug_position and not open_position:
-                    current_price = fetch_latest_price_1m(signal_symbol) or snapshot.get("last_price")
-                    entry_price = float(debug_position.get("entry_price", 0) or 0)
-                    if current_price is not None:
-                        max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
-                        if (
-                            bool(CONFIG.get("max_profit_booking_enabled", True))
-                            and entry_price > 0
-                            and max_profit_points > 0
-                            and float(current_price) >= entry_price + max_profit_points
-                        ):
-                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=MX +{max_profit_points:g}")
-                            debug_signal_positions.pop(signal_symbol, None)
-                            continue
-
-                        entry_low = float(debug_position.get("entry_candle_low", debug_position.get("entry_candle_open", entry_price)) or 0)
-                        loss_stop_points = float(CONFIG.get("loss_stop_points", 0) or 0)
-                        if entry_low > 0 and float(current_price) <= entry_low + loss_stop_points:
-                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=LSL")
-                            debug_signal_positions.pop(signal_symbol, None)
-                            continue
-
-                        if CONFIG.get("trailing_stop_enabled", True) and update_debug_trailing_stop_and_check(signal_symbol, float(current_price)):
-                            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} Reason=TSL")
-                            debug_signal_positions.pop(signal_symbol, None)
-                            continue
-
                 if (
                     tracked_position
                     and (not open_position or open_position.get("status") == "OPEN")
@@ -1281,7 +1238,7 @@ def live_signal_loop():
                             print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={debug_position['entry_price']:.2f} ExitPrice={float(exit_price):.2f}")
                             debug_signal_positions.pop(signal_symbol, None)
 
-                if session_state == "entry" and (not tracked_position) and ok and snapshot.get("signal") == "BUY":
+                if session_state in {"entry", "manage_only"} and (not tracked_position) and ok and snapshot.get("signal") == "BUY":
                     order_symbol = contract["order_symbol"]
                     close_price = snapshot.get("last_price")
                     entry_open = snapshot.get("entry_open")
@@ -1301,7 +1258,8 @@ def live_signal_loop():
                             "strike": contract.get("strike"),
                         }
                         print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {signal_symbol} OrderSymbol={order_symbol} Price={float(close_price):.2f} Side={side}")
-                    place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low))
+                    if session_state == "entry":
+                        place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low))
 
             for symbol in list(positions.keys()):
                 if positions[symbol].get("status") != "OPEN":
@@ -1362,6 +1320,24 @@ def main():
         print("[INFO] Script loaded in safe mode. Fill CONFIG values to enable live trading.")
         return
 
+    expiry_date, trading_days_remaining = get_option_expiry_window_status()
+    if expiry_date is None:
+        print("[SKIP] No upcoming CRUDEOILM options expiry is configured.")
+        return
+
+    expiry_window_days = int(CONFIG.get("option_expiry_window_trading_days", 7))
+    if trading_days_remaining > expiry_window_days:
+        print(
+            f"[SKIP] CRUDEOILM options expire on {expiry_date}; "
+            f"{trading_days_remaining} trading days remain, outside the "
+            f"{expiry_window_days}-day expiry window."
+        )
+        return
+
+    print(
+        f"[EXPIRY WINDOW] CRUDEOILM options expire on {expiry_date}; "
+        f"{trading_days_remaining} trading days remain."
+    )
     print("[INIT] OILMINI started")
     if not build_contract_universe():
         raise SystemExit(1)

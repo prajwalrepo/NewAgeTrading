@@ -159,36 +159,23 @@ def _extract_candle_rows(raw_response):
     return None
 
 
-def _extract_margin_value(raw_response):
-    if isinstance(raw_response, dict):
-        for key in (
-            "available_margin",
-            "margin_available",
-            "mis_balance_available",
-            "future_balance_available",
-            "net_margin",
-            "balance",
-            "available_cash",
-        ):
-            if key in raw_response:
-                try:
-                    return float(raw_response[key])
-                except (TypeError, ValueError):
-                    continue
-        for value in raw_response.values():
-            nested = _extract_margin_value(value)
-            if nested is not None:
-                return nested
-    elif isinstance(raw_response, list):
-        for item in raw_response:
-            nested = _extract_margin_value(item)
-            if nested is not None:
-                return nested
-    elif isinstance(raw_response, (int, float, str)):
+def _extract_margin_value(raw_response, segment_key):
+    if not isinstance(raw_response, dict):
+        return None
+    segment = raw_response.get(segment_key)
+    if not isinstance(segment, dict):
+        return None
+    for key in (
+        "future_balance_available",
+        "option_buying_power",
+        "available_margin",
+        "margin_available",
+    ):
         try:
-            return float(raw_response)
+            if key in segment:
+                return float(segment[key])
         except (TypeError, ValueError):
-            return None
+            continue
     return None
 
 
@@ -725,7 +712,7 @@ def get_available_fno_margin():
         resp = growwapi.get_available_margin_details()
         if not isinstance(resp, dict):
             return None
-        margin_value = _extract_margin_value(resp)
+        margin_value = _extract_margin_value(resp, "fno_margin_details")
         if margin_value is not None:
             return margin_value
     except Exception as exc:
@@ -1026,7 +1013,7 @@ def check_lsl_exit():
             continue
 
         loss_stop_points = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
-        loss_stop_level = entry_low + loss_stop_points
+        loss_stop_level = entry_low - loss_stop_points
 
         cur = fetch_latest_price_1m(symbol)
         if cur is None:
@@ -1037,7 +1024,7 @@ def check_lsl_exit():
                 symbol,
                 pos.get("order_symbol"),
                 float(cur),
-                reason=f"LSL: entry candle low + {loss_stop_points} pts",
+                reason=f"LSL: entry candle low - {loss_stop_points} pts",
                 qty=pos.get("qty"),
             )
 
@@ -1135,7 +1122,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             return None
 
         allocation = float(CONFIG.get("allocation_per_trade", 0) or 0)
-        if fno_margin is not None and fno_margin > 0:
+        if fno_margin is not None:
             use_margin = min(allocation, fno_margin)
         else:
             use_margin = allocation
@@ -1186,7 +1173,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 "product_type": "MIS",
                 "side": candle_to_side.get(candle_symbol),
                 "highest_price": exec_price,
-                "stop_loss_price": candle_low + loss_stop_pips,
+                "stop_loss_price": candle_low - loss_stop_pips,
                 "trailing_sl_activated": False,
                 "trailing_stop_price": exec_price - float(
                     CONFIG.get(
@@ -1199,7 +1186,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             clear_pullback_reentry(candle_symbol)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} Price={exec_price:.2f} EntryCandleOpen={float(entry_candle_open):.2f} EntryCandleLow={candle_low:.2f} OrderID={order_id}")
-            print(f"[{ts}] [SL LEVELS] {candle_symbol} | LSL@{(candle_low + loss_stop_pips):.2f} | MX@{exec_price + CONFIG['max_profit_booking_points']:.2f}")
+            print(f"[{ts}] [SL LEVELS] {candle_symbol} | LSL@{(candle_low - loss_stop_pips):.2f} | MX@{exec_price + CONFIG['max_profit_booking_points']:.2f}")
             return order_id
         print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
         return None
@@ -1336,47 +1323,6 @@ def check_debug_sell_signals(idx_time):
         if candle_symbol in positions and positions[candle_symbol].get("status") == "OPEN":
             debug_signal_positions.pop(candle_symbol, None)
             continue
-
-        current_price = fetch_latest_price_1m(candle_symbol)
-        if current_price is not None:
-            entry_price = float(debug_pos.get("entry_price", 0) or 0)
-            max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
-            if (
-                bool(CONFIG.get("max_profit_booking_enabled", True))
-                and entry_price > 0
-                and max_profit_points > 0
-                and float(current_price) >= entry_price + max_profit_points
-            ):
-                arm_pullback_reentry(candle_symbol, f"MX full profit: +{max_profit_points:g}", float(current_price), idx_time)
-                print(
-                    f"[{idx_time}] [DEBUG SELL SIGNAL] {candle_symbol} "
-                    f"TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} "
-                    f"Reason=MX +{max_profit_points:g}"
-                )
-                debug_signal_positions.pop(candle_symbol, None)
-                continue
-
-            entry_low = float(debug_pos.get("entry_candle_low", debug_pos.get("entry_candle_open", entry_price)) or 0)
-            loss_stop_points = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
-            if entry_low > 0 and float(current_price) <= entry_low + loss_stop_points:
-                clear_pullback_reentry(candle_symbol)
-                print(
-                    f"[{idx_time}] [DEBUG SELL SIGNAL] {candle_symbol} "
-                    f"TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} "
-                    f"Reason=LSL"
-                )
-                debug_signal_positions.pop(candle_symbol, None)
-                continue
-
-            if CONFIG.get("trailing_stop_enabled", True) and update_debug_trailing_stop_and_check(candle_symbol, float(current_price)):
-                clear_pullback_reentry(candle_symbol)
-                print(
-                    f"[{idx_time}] [DEBUG SELL SIGNAL] {candle_symbol} "
-                    f"TrackedBuy={entry_price:.2f} ExitPrice={float(current_price):.2f} "
-                    f"Reason=TSL"
-                )
-                debug_signal_positions.pop(candle_symbol, None)
-                continue
 
         should_exit, exit_price, st_value, exit_signal = option_has_flip_down_exit_signal(candle_symbol, idx_time, allow_debug_tracking=True)
         if should_exit and exit_signal == "SELL":
@@ -1570,7 +1516,7 @@ def live_signal_loop():
                 wait_until_next_interval()
                 continue
 
-            if session_state != "entry" and not tracked_symbols and not any(int(pos.get("qty", 0)) > 0 for pos in live_positions.values()):
+            if session_state not in {"entry", "manage_only"} and not tracked_symbols and not any(int(pos.get("qty", 0)) > 0 for pos in live_positions.values()):
                 wait_until_next_interval()
                 continue
 
@@ -1631,7 +1577,7 @@ def live_signal_loop():
                     tracked_side = candle_to_side.get(tracked_symbol) or debug_pos.get("side")
                     tracked_strike = debug_pos.get("strike")
                     print_flat_market_snapshot(tracked_symbol, tracked_side, idx_time, tracked_strike)
-            elif session_state == "entry":
+            elif session_state in {"entry", "manage_only"}:
                 # Use index only for ATM strike discovery, but entry is option-signal only.
                 atm = select_atm_contract("CE", idx_price)
                 if not atm:
@@ -1663,7 +1609,7 @@ def live_signal_loop():
                     ce_ok = bool(ce_snapshot and ce_snapshot.get("ok") and ce_snapshot.get("signal") in {"BUY", "BUY_REENTRY"} and ce_snapshot.get("last_price") is not None and ce_snapshot.get("entry_open") is not None)
                     pe_ok = bool(pe_snapshot and pe_snapshot.get("ok") and pe_snapshot.get("signal") in {"BUY", "BUY_REENTRY"} and pe_snapshot.get("last_price") is not None and pe_snapshot.get("entry_open") is not None)
 
-                    if ce_ok and int(side_cooldown_tracker.get("CE", 0)) == 0:
+                    if ce_ok:
                         candle_symbol = ce_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
@@ -1680,14 +1626,15 @@ def live_signal_loop():
                                 entry_candle_low=ce_snapshot.get("entry_low"),
                                 strike=ce_snapshot.get("strike"),
                             )
-                            place_buy_order(
-                                candle_symbol,
-                                order_symbol,
-                                ce_snapshot.get("last_price"),
-                                ce_snapshot.get("entry_open"),
-                                entry_candle_low=ce_snapshot.get("entry_low"),
-                            )
-                    elif pe_ok and int(side_cooldown_tracker.get("PE", 0)) == 0:
+                            if session_state == "entry" and int(side_cooldown_tracker.get("CE", 0)) == 0:
+                                place_buy_order(
+                                    candle_symbol,
+                                    order_symbol,
+                                    ce_snapshot.get("last_price"),
+                                    ce_snapshot.get("entry_open"),
+                                    entry_candle_low=ce_snapshot.get("entry_low"),
+                                )
+                    if pe_ok:
                         candle_symbol = pe_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
@@ -1704,13 +1651,14 @@ def live_signal_loop():
                                 entry_candle_low=pe_snapshot.get("entry_low"),
                                 strike=pe_snapshot.get("strike"),
                             )
-                            place_buy_order(
-                                candle_symbol,
-                                order_symbol,
-                                pe_snapshot.get("last_price"),
-                                pe_snapshot.get("entry_open"),
-                                entry_candle_low=pe_snapshot.get("entry_low"),
-                            )
+                            if session_state == "entry" and int(side_cooldown_tracker.get("PE", 0)) == 0:
+                                place_buy_order(
+                                    candle_symbol,
+                                    order_symbol,
+                                    pe_snapshot.get("last_price"),
+                                    pe_snapshot.get("entry_open"),
+                                    entry_candle_low=pe_snapshot.get("entry_low"),
+                                )
 
             wait_until_next_interval()
 

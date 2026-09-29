@@ -65,14 +65,14 @@ CONFIG = {
     # Entry rules
     "use_momentum_filter": True,
     "require_close_above_prev_close": True,
-    "entry_open_gap_limit_points": 10.0,
+    "entry_open_gap_limit_points": 30.0,
     "flip_confirmation_window_candles": 1,
     "pullback_reentry_enabled": True,
     "pullback_reentry_touch_tolerance_points": 3.0,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "trading_weekdays": ["MONDAY", "TUESDAY", "FRIDAY"],
+    "trading_weekdays": ["WEDNESDAY", "THURSDAY"],
     "entry_window_start": "09:13",
     "entry_window_end": "15:10",
     "force_exit_time": "15:30",
@@ -80,27 +80,27 @@ CONFIG = {
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 10,
-    "max_lots_per_trade": 1,
-    "allocation_per_trade": 40000,
+    "max_lots_per_trade": 10,
+    "allocation_per_trade": 20000,
     "check_margin_before_order": True,
-    "max_trades_per_day_ce": 2,
-    "max_trades_per_day_pe": 2,
+    "max_trades_per_day_ce": 3,
+    "max_trades_per_day_pe": 3,
 
     # Risk / exits
     "special_exit_enabled": True,
     # Max profit booking (configurable points)
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 20,
-    "loss_stop_points": 10,
+    "max_profit_booking_points": 100,
+    "loss_stop_points": 2,
 
     # Trailing stop-loss (configurable points)
     # trailing_stop_loss_points = gap kept behind the highest price
     # trailing_stop_trigger_points = minimum profit required before activation
     "trailing_stop_enabled": True,
-    "trailing_stop_loss_points": 8,
-    "trailing_stop_trigger_points": 8,
+    "trailing_stop_loss_points": 20,
+    "trailing_stop_trigger_points": 20,
     "max_profit_check_interval_sec": 60,
-    "buy_cooldown_candles": 2,
+    "buy_cooldown_candles": 1,
     "exit_order_cooldown_sec": 90,
 
     # API retry
@@ -109,7 +109,7 @@ CONFIG = {
 
     "DEBUG": False,
     # Track generated signals even when Groww blocks the order for margin.
-    "debug_signal_tracking_enabled": True,
+    "debug_signal_tracking_enabled": False,
 }
 
 

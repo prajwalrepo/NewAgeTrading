@@ -82,11 +82,11 @@ CONFIG = {
 
     # Entry quality rules
     "require_close_above_prev_close": True,
-    "entry_open_gap_limit_points": 10.0,
+    "entry_open_gap_limit_points": 2.0,
     "use_momentum_filter": True,
     "flip_confirmation_window_candles": 1,
     # When enabled, only Supertrend direction flips control entries and exits.
-    "only_supertrend": False,
+    "only_supertrend": True,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
@@ -101,17 +101,17 @@ CONFIG = {
     "max_lots_per_trade": 1,
     "allocation_per_trade": 20000,
     "check_margin_before_order": True,
-    "max_trades_per_day_ce": 2,
-    "max_trades_per_day_pe": 2,
+    "max_trades_per_day_ce": 3,
+    "max_trades_per_day_pe": 3,
 
     # Stops
     # Decimal values are supported, for example 0.1, 0.5, or 1.2.
-    "loss_stop_points": 10.0,
+    "loss_stop_points": 0.5,
     "trailing_stop_enabled": True,
     "trailing_stop_loss_points": 0.5,
     "trailing_stop_trigger_points": 0.5,
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 3.0,
+    "max_profit_booking_points": 1.0,
     "max_profit_check_interval_sec": 60,
     "buy_cooldown_candles": 2,
     "exit_order_cooldown_sec": 90,
@@ -177,6 +177,7 @@ def _extract_margin_value(raw_response, segment_key):
         "option_buying_power",
         "available_margin",
         "margin_available",
+        "mis_balance_available",
     ):
         try:
             if key in segment:
@@ -907,9 +908,16 @@ def get_available_margin():
         resp = growwapi.get_available_margin_details()
         if not isinstance(resp, dict):
             return None
-        margin_value = _extract_margin_value(resp, "commodity_margin_details")
-        if margin_value is not None:
-            return margin_value
+        for segment_key in (
+            "commodity_margin_details",
+            "fno_margin_details",
+            "equity_margin_details",
+        ):
+            margin_value = _extract_margin_value(resp, segment_key)
+            if margin_value is not None:
+                if segment_key != "commodity_margin_details":
+                    print(f"[MARGIN] Using {segment_key} fallback")
+                return margin_value
     except Exception as exc:
         print(f"[ERROR] Failed to fetch margin: {type(exc).__name__}: {exc}")
     return None

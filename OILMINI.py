@@ -87,6 +87,8 @@ CONFIG = {
     "entry_open_gap_limit_points": 10.0,
     "use_momentum_filter": True,
     "flip_confirmation_window_candles": 1,
+    "pullback_reentry_enabled": True,
+    "pullback_reentry_touch_tolerance_points": 3.0,
     # When enabled, only Supertrend direction flips control entries and exits.
     "only_supertrend": True,
 
@@ -221,6 +223,7 @@ exit_attempt_tracker = {}
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 last_option_signal_candle = {}
 debug_signal_positions = {}
+pullback_reentry_tracker = {}
 last_max_profit_check_at = {}
 loop_candle_cache = {}
 loop_price_cache = {}
@@ -331,6 +334,7 @@ def close_all_open_positions(reason):
         place_sell_order(symbol, pos.get("order_symbol"), float(exit_price), reason=reason, qty=pos.get("qty"))
 
     debug_signal_positions.clear()
+    pullback_reentry_tracker.clear()
 
 
 def _parse_expiry_fs_date(expiry_fs_text):
@@ -790,7 +794,50 @@ def get_tracked_contracts():
             )
             seen.add(candle_symbol)
 
+    if CONFIG.get("pullback_reentry_enabled", False):
+        for candle_symbol, reentry_pos in pullback_reentry_tracker.items():
+            if candle_symbol in seen:
+                continue
+            tracked.append(
+                get_contract_for_symbol(
+                    candle_symbol,
+                    fallback_side=reentry_pos.get("side"),
+                    fallback_order_symbol=reentry_pos.get("order_symbol"),
+                    fallback_strike=reentry_pos.get("strike"),
+                )
+            )
+            seen.add(candle_symbol)
+
     return tracked
+
+
+def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
+    if not CONFIG.get("pullback_reentry_enabled", False):
+        return
+
+    reason_text = str(reason or "").upper()
+    if not (
+        reason_text.startswith("MX")
+        or reason_text.startswith("MAX_PROFIT")
+        or reason_text.startswith("TSL")
+    ):
+        pullback_reentry_tracker.pop(candle_symbol, None)
+        return
+
+    side = candle_to_side.get(candle_symbol)
+    pullback_reentry_tracker[candle_symbol] = {
+        "side": side,
+        "strike": next((rec.get("strike") for rec in contract_universe.get(side, []) if rec.get("candle_symbol") == candle_symbol), None),
+        "order_symbol": candle_to_order.get(candle_symbol),
+        "armed_at": idx_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "last_exit_price": float(exit_price),
+        "reason": reason,
+    }
+    print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
+
+
+def clear_pullback_reentry(candle_symbol):
+    pullback_reentry_tracker.pop(candle_symbol, None)
 
 
 def get_underlying_reference_price():
@@ -822,6 +869,7 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
     entry_low = float(df["low"].iloc[closed_idx])
     close_price = float(df["close"].iloc[closed_idx])
     prev_close = float(df["close"].iloc[prev_idx])
+    prev_high = float(df["high"].iloc[prev_idx])
     st_value = float(st_arr[closed_idx]) if not np.isnan(st_arr[closed_idx]) else None
     trend = "up" if dir_arr[closed_idx] == 1 else "down"
     fresh_flip = dir_arr[closed_idx] == 1 and dir_arr[prev_idx] == -1
@@ -834,11 +882,26 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
         (close_price > prev_close) if CONFIG.get("require_close_above_prev_close", True) else True
     ) if CONFIG.get("use_momentum_filter", True) else True
     open_gap_ok = abs(entry_open - prev_close) <= float(CONFIG.get("entry_open_gap_limit_points", 10.0))
-    if CONFIG.get("only_supertrend", False):
-        allow_buy = bool(is_new_closed_candle and fresh_flip)
-    else:
-        allow_buy = bool(is_new_closed_candle and fresh_flip and momentum_ok and open_gap_ok)
-    if allow_buy:
+
+    allow_flip = bool(is_new_closed_candle and fresh_flip)
+    base_buy = allow_flip if CONFIG.get("only_supertrend", False) else bool(allow_flip and momentum_ok and open_gap_ok)
+
+    reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
+    reentry_ok = False
+    if reentry_candidate is not None:
+        if trend != "up":
+            clear_pullback_reentry(candle_symbol)
+        else:
+            touch_tolerance = float(CONFIG.get("pullback_reentry_touch_tolerance_points", 0.0) or 0.0)
+            touched_st = st_value is not None and entry_low <= (st_value + touch_tolerance)
+            reclaimed_uptrend = st_value is not None and close_price > st_value
+            continuation_ok = close_price > prev_high and close_price >= entry_open
+            reentry_ok = bool(touched_st and reclaimed_uptrend and continuation_ok and momentum_ok and open_gap_ok)
+
+    allow_buy = bool(base_buy or reentry_ok)
+    if reentry_ok:
+        signal = "BUY_REENTRY"
+    elif allow_buy:
         signal = "BUY"
     elif (
         CONFIG.get("only_supertrend", False)
@@ -1040,6 +1103,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
                 "trailing_sl_activated": False,
             }
             increment_trade_count(side)
+            clear_pullback_reentry(candle_symbol)
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} Price={exec_price:.2f} EntryLow={candle_low:.2f}")
             return order_id
         return None
@@ -1136,6 +1200,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             positions[candle_symbol]["status"] = "CLOSED"
             positions[candle_symbol]["exit_price"] = exec_price
             positions[candle_symbol]["qty"] = 0
+            arm_pullback_reentry(candle_symbol, reason, exec_price)
             side = candle_to_side.get(candle_symbol)
             if side in side_cooldown_tracker:
                 side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
@@ -1246,12 +1311,14 @@ def live_signal_loop():
                             print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={debug_position['entry_price']:.2f} ExitPrice={float(exit_price):.2f}")
                             debug_signal_positions.pop(signal_symbol, None)
 
-                if session_state in {"entry", "manage_only"} and (not tracked_position) and ok and snapshot.get("signal") == "BUY":
+                if session_state in {"entry", "manage_only"} and (not tracked_position) and ok and snapshot.get("signal") in {"BUY", "BUY_REENTRY"}:
                     order_symbol = contract["order_symbol"]
                     close_price = snapshot.get("last_price")
                     entry_open = snapshot.get("entry_open")
                     entry_low = snapshot.get("entry_low")
                     print(f"[{idx_time}] [SIGNAL] CRUDEOILM {side} {signal_symbol} Close={close_price:.2f} ST={snapshot.get('st_value') if snapshot.get('st_value') is not None else 'NA'}")
+                    if snapshot.get("signal") == "BUY_REENTRY":
+                        print(f"[{idx_time}] [REENTRY SIGNAL] {signal_symbol} same strike pullback continuation")
                     if CONFIG.get("debug_signal_tracking_enabled", False):
                         debug_signal_positions[signal_symbol] = {
                             "order_symbol": order_symbol,
@@ -1265,6 +1332,7 @@ def live_signal_loop():
                             "trailing_stop_price": float(close_price) - float(CONFIG.get("trailing_stop_loss_points", 8) or 8),
                             "strike": contract.get("strike"),
                         }
+                        clear_pullback_reentry(signal_symbol)
                         print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {signal_symbol} OrderSymbol={order_symbol} Price={float(close_price):.2f} Side={side}")
                     if session_state == "entry":
                         place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low))

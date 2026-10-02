@@ -1,0 +1,132 @@
+{
+  "comment": "Central Scheduler Configuration - Modify this file to customize your schedule",
+  
+  "global_settings": {
+    "timezone": "IST",
+    "timezone_offset_minutes": 330,
+    "check_interval_seconds": 60,
+    "dry_run": false,
+    "enable_all_day_logging": true,
+    "restart_crashed_scripts": true,
+    "api_rate_limit_spacing": true,
+    "log_retention_days": 2
+  },
+
+  "email_notifications": {
+    "enabled": true,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 465,
+    "use_ssl": true,
+    "smtp_username": "gencinvestor@gmail.com",
+    "smtp_password": "powg jovk hxry eoaq",
+    "from_email": "gencinvestor@gmail.com",
+    "to_emails": [
+      "gencinvestor@gmail.com"
+    ],
+    "attach_log_on_stop": true,
+    "notes": "When enabled=true, the scheduler sends one mail when a script starts and one more when it stops or crashes. The stop mail attaches the script run log. Use an app password for Gmail."
+  },
+
+  "scripts": {
+    "NIFTYIntra": {
+      "script_name": "NIFTYIntra.py",
+      "description": "NIFTY Intraday FNO Strategy (9:13 AM to 3:30 PM)",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
+      "run_time_start": "09:13",
+      "run_time_end": "15:30",
+      "api_delay_seconds": 0,
+      "notes": "Starts first - no delay"
+    },
+
+    "SENSEXINTRA": {
+      "script_name": "SENSEXINTRA.py",
+      "description": "SENSEX Intraday FNO Strategy (Bombay Stock Exchange)",
+      "enabled": true,
+      "run_days": ["WEDNESDAY", "THURSDAY"],
+      "run_time_start": "09:12",
+      "run_time_end": "15:30",
+      "api_delay_seconds": 10,
+      "notes": "Runs only on Wednesday and Thursday"
+    },
+
+    "OILMINI": {
+      "script_name": "OILMINI.py",
+      "description": "Crude Oil Mini Options Strategy (MCX)",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      "run_time_start": "16:00",
+      "run_time_end": "23:30",
+      "api_delay_seconds": 60,
+      "notes": "Runs from 16:00 and only between the 9th and 20th day of the month"
+    },
+
+    "NATGASMINI": {
+      "script_name": "NATGASMINI.py",
+      "description": "Natural Gas Mini Options Strategy (MCX)",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "16:30",
+      "run_time_end": "23:30",
+      "api_delay_seconds": 90,
+      "notes": "Runs from 16:30 on trading days"
+    }
+  },
+
+  "examples": {
+    "run_only_nifty_on_friday": {
+      "description": "To run ONLY NIFTY on Friday 9:15 AM to 3:30 PM",
+      "steps": [
+        "Set NIFTYIntra.enabled = true",
+        "Set NIFTYIntra.run_days = ['FRIDAY']",
+        "Set NIFTYIntra.run_time_start = '09:15'",
+        "Set SENSEXINTRA.enabled = false",
+        "Set OILMINI.enabled = false",
+        "Set NATGASMINI.enabled = false"
+      ]
+    },
+
+    "increase_api_delays": {
+      "description": "To prevent rate limit errors, increase delays",
+      "steps": [
+        "NIFTYIntra.api_delay_seconds = 0",
+        "SENSEXINTRA.api_delay_seconds = 60  (was 30)",
+        "OILMINI.api_delay_seconds = 120     (was 60)",
+        "NATGASMINI.api_delay_seconds = 180  (was 90)"
+      ]
+    },
+
+    "dry_run_testing": {
+      "description": "To test without sending broker requests",
+      "steps": [
+        "Set global_settings.dry_run = true",
+        "Run: python scheduler.py",
+        "Each script must support --dry-run flag"
+      ]
+    }
+  },
+
+  "day_reference": {
+    "MONDAY": 0,
+    "TUESDAY": 1,
+    "WEDNESDAY": 2,
+    "THURSDAY": 3,
+    "FRIDAY": 4,
+    "SATURDAY": 5,
+    "SUNDAY": 6
+  },
+
+  "trading_hours_reference": {
+    "NSE_NIFTY_SENSEX": {
+      "description": "Stock Exchange Hours (India)",
+      "trading_start": "09:15",
+      "trading_end": "15:30"
+    },
+    "MCX_COMMODITIES": {
+      "description": "Commodity Exchange Hours (India)",
+      "trading_start": "09:15",
+      "trading_end": "23:55"
+    }
+  }
+}

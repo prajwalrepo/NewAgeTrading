@@ -17,11 +17,8 @@
 # =============================================================================
 
 from datetime import datetime, time as dt_time, timedelta, timezone
-from email.message import EmailMessage
 import os
 import re
-import smtplib
-import ssl
 import sys
 import threading
 import time
@@ -51,15 +48,15 @@ CONFIG = {
     # Supported entries:
     # 1) String: "08Sep26" (uses matching order_expiry_* by index if provided as list)
     # 2) Dict: {"candle": "25Aug26", "order": "26AUG"} for monthly style order token
-    "expiry_fs": ["24Sep26", "01Oct26", "08Oct26", "15Oct26"],
+    "expiry_fs": ["08Oct26", "15Oct26","22Oct26", "29Oct26", "05Nov26","12Nov26", "19Nov26", "26Nov26"],
     # Order expiry token(s) paired with expiry_fs by index for list usage.
     # Weekly-style examples: "26908" (YYMDD)
     # Monthly-style examples: "26AUG" (YYMMM)
-    "order_expiry": ["26924", "261001", "261008", "261015"],
+    "order_expiry": ["26O08", "26O15", "26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
     "strike_step": 100,
     # Keep the configured universe wide enough for normal SENSEX movement.
     # ATM selection then chooses the nearest 100-point strike to the index.
-    "strike_start": 70000,
+    "strike_start": 60000,
     "strike_end": 80000,
 
     # Entry rules
@@ -68,7 +65,7 @@ CONFIG = {
     "entry_open_gap_limit_points": 30.0,
     "flip_confirmation_window_candles": 1,
     "pullback_reentry_enabled": True,
-    "pullback_reentry_touch_tolerance_points": 3.0,
+    "pullback_reentry_touch_tolerance_points": 8.0,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
@@ -80,7 +77,7 @@ CONFIG = {
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 10,
-    "max_lots_per_trade": 10,
+    "max_lots_per_trade": 2,
     "allocation_per_trade": 20000,
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 3,
@@ -91,7 +88,7 @@ CONFIG = {
     # Max profit booking (configurable points)
     "max_profit_booking_enabled": True,
     "max_profit_booking_points": 100,
-    "loss_stop_points": 2,
+    "loss_stop_points": 5,
 
     # Trailing stop-loss (configurable points)
     # trailing_stop_loss_points = gap kept behind the highest price
@@ -109,7 +106,7 @@ CONFIG = {
 
     "DEBUG": False,
     # Track generated signals even when Groww blocks the order for margin.
-    "debug_signal_tracking_enabled": False,
+    "debug_signal_tracking_enabled": True,
 }
 
 
@@ -359,12 +356,59 @@ def _parse_order_expiry_token(order_expiry_text):
             return datetime(2000 + year, month, day)
         except ValueError:
             continue
+
+    compact_match = re.fullmatch(r"(\d{2})([A-Z])(\d{2})", token)
+    if compact_match:
+        year = int(compact_match.group(1))
+        month_code = compact_match.group(2)
+        day = int(compact_match.group(3))
+        month_map = {
+            "A": 4,
+            "D": 12,
+            "F": 2,
+            "J": 1,
+            "M": 3,
+            "N": 11,
+            "O": 10,
+            "S": 9,
+        }
+        month = month_map.get(month_code)
+        if month is not None:
+            try:
+                return datetime(2000 + year, month, day)
+            except ValueError:
+                pass
+    return None
+
+
+def _resolve_candle_symbol_from_universe(root, strike_text, side):
+    try:
+        strike = int(strike_text)
+    except (TypeError, ValueError):
+        return None
+
+    expected_root = str(CONFIG.get("index_symbol", "") or "").upper()
+    root = str(root or "").upper()
+    if expected_root and root and root != expected_root:
+        return None
+
+    side = str(side or "").upper()
+    for rec in contract_universe.get(side, []):
+        try:
+            if int(rec.get("strike", -1)) == strike:
+                candle_symbol = rec.get("candle_symbol")
+                if candle_symbol:
+                    return candle_symbol
+        except (TypeError, ValueError):
+            continue
     return None
 
 
 def resolve_candle_symbol_from_order_symbol(order_symbol):
     symbol = (order_symbol or "").upper()
-    match = re.fullmatch(r"([A-Z]+)([0-9A-Z]+)(\d+)(CE|PE)", symbol)
+    match = re.fullmatch(r"([A-Z]+)(\d{2}[A-Z]\d{2})(\d+)(CE|PE)", symbol)
+    if not match:
+        match = re.fullmatch(r"([A-Z]+)([0-9A-Z]+)(\d+)(CE|PE)", symbol)
     if not match:
         return None
 
@@ -377,7 +421,7 @@ def resolve_candle_symbol_from_order_symbol(order_symbol):
     if expiry_dt is not None:
         return f"{root}-{expiry_dt.strftime('%d%b%y')}-{int(strike_text)}-{side}"
 
-    return None
+    return _resolve_candle_symbol_from_universe(root, strike_text, side)
 
 
 def _parse_expiry_fs_date(expiry_fs_text):
@@ -962,8 +1006,15 @@ def close_open_side(side, reason):
 
 def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = option_has_flip_buy_signal(candle_symbol, idx_time)
+    position = positions.get(candle_symbol)
+    pnl_text = "NA"
+    if position and int(position.get("qty", 0)) > 0 and last_price is not None:
+        entry_price = float(position.get("entry_price", 0) or 0)
+        qty_units = int(position.get("qty", 0) or 0)
+        if entry_price > 0 and qty_units > 0:
+            pnl_text = f"{(last_price - entry_price) * qty_units:.0f}"
     if last_price is None:
-        print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA")
+        print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA PnL={pnl_text}")
         return {
             "ok": ok,
             "last_price": None,
@@ -983,7 +1034,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     low_text = f"{entry_low:.2f}" if entry_low is not None else "NA"
     print(
         f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
-        f"Signal={signal} Direction={dir_text}"
+        f"Signal={signal} Direction={dir_text} PnL={pnl_text}"
     )
     return {
         "ok": ok,

@@ -1,4 +1,0 @@
-[2026-10-02 19:41:58 UTC+05:30] [STARTED] NATGASMINI -> NATGASMINI.py
-[ERROR] Authentication failed: The rate limit for the Groww API has been exceeded. Please try again later.
-[INFO] Script loaded in safe mode. Fill CONFIG values to enable live trading.
-[2026-10-02 19:42:12 UTC+05:30] [STOPPED] Reason=Process exited unexpectedly ExitCode=0

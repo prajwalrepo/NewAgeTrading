@@ -1,0 +1,18 @@
+2026-10-02 19:40:28,534 - INFO - [SCHEDULER] - [CONFIG] Loaded scheduler settings from scheduler_config.json
+2026-10-02 19:40:28,554 - INFO - [SCHEDULER] - ================================================================================
+2026-10-02 19:40:28,555 - INFO - [SCHEDULER] - [SCHEDULER] Started at 2026-10-02 19:40:28 IST
+2026-10-02 19:40:28,555 - INFO - [SCHEDULER] - [MODE] LIVE
+2026-10-02 19:40:28,555 - INFO - [SCHEDULER] - [SCRIPTS] 4 configured
+2026-10-02 19:40:28,556 - INFO - [SCHEDULER] - [LOG_RETENTION] 2 day(s)
+2026-10-02 19:40:28,557 - INFO - [SCHEDULER] - ================================================================================
+2026-10-02 19:40:28,578 - INFO - [SCHEDULER] - [DELAY] Waiting 90s before NATGASMINI...
+2026-10-02 19:41:58,579 - INFO - [SCHEDULER] - [SELECTED] NATGASMINI selected for running
+2026-10-02 19:41:58,740 - INFO - [SCHEDULER] - [STARTED] NATGASMINI started (PID 17604)
+2026-10-02 19:42:02,742 - INFO - [SCHEDULER] - [EMAIL] Sent: [NATGASMINI] started at 1941 IST
+2026-10-02 19:42:11,740 - INFO - [SCHEDULER] - [NATGASMINI] [ERROR] Authentication failed: The rate limit for the Groww API has been exceeded. Please try again later.
+2026-10-02 19:42:11,740 - INFO - [SCHEDULER] - [NATGASMINI] [INFO] Script loaded in safe mode. Fill CONFIG values to enable live trading.
+2026-10-02 19:42:12,748 - ERROR - [SCHEDULER] - [CRASH] NATGASMINI crashed (exit code: 0)
+2026-10-02 19:42:12,776 - INFO - [SCHEDULER] - [STOPPED] NATGASMINI stopped | Reason=Process exited unexpectedly | ExitCode=0 | Log=NATGASMINI02Oct1942.log
+2026-10-02 19:42:17,520 - INFO - [SCHEDULER] - [EMAIL] Sent: [NATGASMINI] crashed at 1942 IST
+2026-10-02 19:42:17,521 - ERROR - [SCHEDULER] - [BLOCKED] NATGASMINI blocked for current run window: Authentication failed / API permission issue
+2026-10-02 19:57:08,204 - INFO - [SCHEDULER] - [STOP] Scheduler stopped by user

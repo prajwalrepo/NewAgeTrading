@@ -7,7 +7,7 @@
     "check_interval_seconds": 60,
     "dry_run": false,
     "enable_all_day_logging": true,
-    "restart_crashed_scripts": true,
+    "restart_crashed_scripts": false,
     "api_rate_limit_spacing": true,
     "log_retention_days": 2
   },

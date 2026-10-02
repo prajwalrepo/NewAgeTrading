@@ -113,7 +113,7 @@ CONFIG = {
     "check_interval_seconds": 60,    # Check every 60 seconds if script should run
     "dry_run": False,                # Set True to test without sending broker requests
     "enable_all_day_logging": True,  # Keep logs running all day
-    "restart_crashed_scripts": True,  # Auto-restart if script crashes
+    "restart_crashed_scripts": False,  # Auto-restart if script crashes
     "api_rate_limit_spacing": True,  # Space out API calls
     "log_retention_days": 2,
     "email_notifications": {

@@ -30,8 +30,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 CONFIG = {
     # Fill these before running live.
-    "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1NzkxNzI4OTYsImlhdCI6MTc5MDc3Mjg5NiwibmJmIjoxNzkwNzcyODk2LCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCJlMDQ4OTNiNC1kNDI0LTQ1NTctYjkxMi01ZGM0ODU5NWI4NmZcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiOWM0YTRhOWYtZGZmYi01MDlkLWJmNzYtMzYyOTFlMGI0M2FlXCIsXCJzZXNzaW9uSWRcIjpcIjQxMWJkNjM3LTU5MTktNDgxMi04MjViLTQyNzI3ODA4N2Q3ZFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIyMDUuMjU0LjE4NC4yMjEsMTY3LjEwMy41NS43OSwxNzIuNjkuMTIyLjI0NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU3OTE3Mjg5NjA4OCxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.eFQgHp7uXGO5IYx11jJTpN7-uaAqy7vV4VqE9jOTO1aIONQuIVaL-y16HDYOqSho3Ya0VAENVbuQHwA_BYaAew",
-       "api_secret": "WJ3PWEJZSM3TBR7XQNUEB2OUTD4LWGQJ",
+   "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
+           "api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
    
 
     "commodity_root": "NATGASMINI",
@@ -78,7 +78,7 @@ CONFIG = {
     "strike_start": 200,
     "strike_end": 420,
 
-    "candle_interval": "1M",
+    "candle_interval": "2M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -102,7 +102,7 @@ CONFIG = {
 
     # Risk
     "lot_size": 250,
-    "max_lots_per_trade": 1,
+    "max_lots_per_trade": 4,
     "allocation_per_trade": 20000,
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 3,
@@ -112,13 +112,13 @@ CONFIG = {
     # Decimal values are supported, for example 0.1, 0.5, or 1.2.
     "loss_stop_points": 0.5,
     "trailing_stop_enabled": True,
-    "trailing_stop_loss_points": 0.5,
+    "trailing_stop_loss_points": 0.4,
     "trailing_stop_trigger_points": 0.5,
     "max_profit_booking_enabled": True,
     "max_profit_booking_points": 1.0,
     "max_profit_check_interval_sec": 60,
-    "buy_cooldown_candles": 2,
-    "exit_order_cooldown_sec": 90,
+    "buy_cooldown_candles": 0,
+    "exit_order_cooldown_sec": 30,
 
     "DEBUG": False,
     "debug_signal_tracking_enabled": True,

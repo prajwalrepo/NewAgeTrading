@@ -117,7 +117,7 @@ CONFIG = {
     "max_profit_booking_enabled": True,
     "max_profit_booking_points": 3.0,
     "max_profit_check_interval_sec": 200,
-    "buy_cooldown_candles": 2,
+    "buy_cooldown_candles": 0,
     "exit_order_cooldown_sec": 90,
 
     "DEBUG": False,

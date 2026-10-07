@@ -78,17 +78,27 @@ SCRIPTS_SCHEDULE = {
         "run_time_end": "15:30",
         "api_delay_seconds": 10,  # Start 30 sec after NIFTY to avoid rate limit
     },
+
+    "320trade": {
+        "script_name": "320trade.py",
+        "description": "Expiry-day 3:20 ATM CE+PE Straddle Strategy",
+        "enabled": True,
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
+        "run_time_start": "15:18",
+        "run_time_end": "15:30",
+        "api_delay_seconds": 0,
+    },
     
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
         "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 60,  # Start 60 sec after NIFTY
+        "api_delay_seconds": 10,  # Start 60 sec after NIFTY
     },
     
     "NATGASMINI": {
@@ -100,7 +110,7 @@ SCRIPTS_SCHEDULE = {
         "run_days_of_month": None,  # Every day of the month
         "run_time_start": "16:30",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 90,  # Start 90 sec after NIFTY
+        "api_delay_seconds": 10,  # Start 90 sec after NIFTY
     },
 }
 
@@ -211,8 +221,20 @@ def _format_time_component(ts):
     return ts.strftime("%H%M").lstrip("0") or "0"
 
 
+def _use_single_daily_run_log(config_key):
+    """Return True when a script should append to one daily run log file."""
+    return str(config_key).upper() == "320TRADE"
+
+
+def build_daily_run_log_path(config_key, ts):
+    """Build a single per-day run log filename for scripts that avoid per-run files."""
+    return RUN_LOG_DIR / f"{config_key}{_format_date_component(ts)}.log"
+
+
 def build_temp_run_log_path(config_key, started_at):
     """Create a temporary log path until the script ends and we know the stop time."""
+    if _use_single_daily_run_log(config_key):
+        return build_daily_run_log_path(config_key, started_at)
     return RUN_LOG_DIR / f"{config_key}{_format_date_component(started_at)}{_format_time_component(started_at)}_RUNNING.log"
 
 
@@ -349,6 +371,12 @@ def finalize_run_log(run_context, ended_at, reason, exit_code=None):
         run_log_path,
         f"[{ended_at.strftime('%Y-%m-%d %H:%M:%S %Z')}] [STOPPED] Reason={reason} ExitCode={exit_code}",
     )
+
+    if _use_single_daily_run_log(run_context["config_key"]):
+        # For daily consolidated logs we keep appending to the same file.
+        run_context["run_log_path"] = run_log_path
+        return Path(run_context["run_log_path"])
+
     final_path = _dedupe_path(build_final_run_log_path(run_context["config_key"], run_context["started_at"], ended_at))
     try:
         run_log_path.rename(final_path)

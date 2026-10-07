@@ -50,6 +50,17 @@
       "notes": "Runs only on Wednesday and Thursday"
     },
 
+    "320trade": {
+      "script_name": "320trade.py",
+      "description": "Expiry-day 3:20 ATM CE+PE Straddle Strategy",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "15:18",
+      "run_time_end": "15:30",
+      "api_delay_seconds": 0,
+      "notes": "Runs in the 15:20-15:30 window and only trades if a configured NIFTY or SENSEX expiry matches today"
+    },
+
     "OILMINI": {
       "script_name": "OILMINI.py",
       "description": "Crude Oil Mini Options Strategy (MCX)",

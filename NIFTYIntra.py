@@ -32,8 +32,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 CONFIG = {
-    "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1NzkxNzI4OTYsImlhdCI6MTc5MDc3Mjg5NiwibmJmIjoxNzkwNzcyODk2LCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCJlMDQ4OTNiNC1kNDI0LTQ1NTctYjkxMi01ZGM0ODU5NWI4NmZcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiOWM0YTRhOWYtZGZmYi01MDlkLWJmNzYtMzYyOTFlMGI0M2FlXCIsXCJzZXNzaW9uSWRcIjpcIjQxMWJkNjM3LTU5MTktNDgxMi04MjViLTQyNzI3ODA4N2Q3ZFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIyMDUuMjU0LjE4NC4yMjEsMTY3LjEwMy41NS43OSwxNzIuNjkuMTIyLjI0NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU3OTE3Mjg5NjA4OCxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.eFQgHp7uXGO5IYx11jJTpN7-uaAqy7vV4VqE9jOTO1aIONQuIVaL-y16HDYOqSho3Ya0VAENVbuQHwA_BYaAew",
-    "api_secret": "WJ3PWEJZSM3TBR7XQNUEB2OUTD4LWGQJ",
+    "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
+        "api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
 
     # Core setup
     "index_symbol": "NIFTY",
@@ -61,7 +61,7 @@ CONFIG = {
     "use_momentum_filter": True,
     "require_close_above_prev_close": True,
     "entry_open_gap_limit_points": 10.0,
-    "flip_confirmation_window_candles": 1,
+    "flip_confirmation_window_candles": 2,
     "pullback_reentry_enabled": True,
     "pullback_reentry_touch_tolerance_points": 5.0,
 
@@ -85,7 +85,7 @@ CONFIG = {
     "special_exit_enabled": True,
     # Max profit booking (configurable points)
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 50,
+    "max_profit_booking_points": 30,
     "loss_stop_points": 2,
 
     # Trailing stop-loss (configurable points)
@@ -95,7 +95,7 @@ CONFIG = {
     "trailing_stop_loss_points": 10,
     "trailing_stop_trigger_points": 10,
     "max_profit_check_interval_sec": 60,
-    "buy_cooldown_candles": 2,
+    "buy_cooldown_candles": 0,
     "exit_order_cooldown_sec": 90,
 
     # API retry
@@ -195,6 +195,7 @@ exit_attempt_tracker = {}
 exit_reason_tracker = {}
 buy_signal_attempt_tracker = {}
 debug_signal_positions = {}
+debug_last_max_check_at = {}
 pullback_reentry_tracker = {}
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 no_data_warn_tracker = {}
@@ -298,6 +299,7 @@ def close_all_open_positions(reason, idx_time=None):
         place_sell_order(symbol, pos.get("order_symbol"), float(exit_price), reason=reason, qty=pos.get("qty"))
 
     debug_signal_positions.clear()
+    debug_last_max_check_at.clear()
     pullback_reentry_tracker.clear()
 
 
@@ -1361,15 +1363,95 @@ def track_debug_buy_signal(candle_symbol, order_symbol, price, idx_time, entry_c
         "trailing_stop_price": float(price) - trail_gap,
         "strike": strike,
     }
+    debug_last_max_check_at[candle_symbol] = None
     clear_pullback_reentry(candle_symbol)
     print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {candle_symbol} OrderSymbol={order_symbol} Price={float(price):.2f} Side={side}")
+    loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
+    print(
+        f"[{idx_time}] [DEBUG SL LEVELS] {candle_symbol} "
+        f"| LSL@{(entry_low - loss_stop_pips):.2f} "
+        f"| MX@{(float(price) + float(CONFIG.get('max_profit_booking_points', 0) or 0)):.2f}"
+    )
 
 
 def check_debug_sell_signals(idx_time):
     if not CONFIG.get("debug_signal_tracking_enabled", False):
         return
+
+    max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
+    max_profit_check_interval = int(CONFIG.get("max_profit_check_interval_sec", 60) or 60)
+    loss_stop_points = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
+
     for candle_symbol, debug_pos in list(debug_signal_positions.items()):
         if candle_symbol in positions and positions[candle_symbol].get("status") == "OPEN":
+            debug_last_max_check_at.pop(candle_symbol, None)
+            debug_signal_positions.pop(candle_symbol, None)
+            continue
+
+        current_price = fetch_latest_price_1m(candle_symbol)
+        if current_price is None:
+            continue
+
+        entry_price = float(debug_pos.get("entry_price", 0) or 0)
+        entry_low = float(debug_pos.get("entry_candle_low", debug_pos.get("entry_candle_open", entry_price)) or 0)
+
+        if (
+            CONFIG.get("max_profit_booking_enabled", True)
+            and entry_price > 0
+            and max_profit_points > 0
+        ):
+            now_ts = datetime.now()
+            last_check = debug_last_max_check_at.get(candle_symbol)
+            max_check_due = (
+                last_check is None
+                or max_profit_check_interval <= 0
+                or (now_ts - last_check).total_seconds() >= max_profit_check_interval
+            )
+            if max_check_due:
+                debug_last_max_check_at[candle_symbol] = now_ts
+                mx_trigger = entry_price + max_profit_points
+                if float(current_price) >= mx_trigger:
+                    side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
+                    pnl_points = float(current_price) - entry_price
+                    print(
+                        f"[{idx_time}] [DEBUG EXIT SIGNAL] {candle_symbol} "
+                        f"Reason=MX +{max_profit_points:g}pts Entry={entry_price:.2f} Exit={float(current_price):.2f} "
+                        f"PnLPoints={pnl_points:.2f}"
+                    )
+                    arm_pullback_reentry(candle_symbol, f"MX full profit: +{max_profit_points:g}", float(current_price), idx_time)
+                    if side in side_cooldown_tracker:
+                        side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
+                    debug_last_max_check_at.pop(candle_symbol, None)
+                    debug_signal_positions.pop(candle_symbol, None)
+                    continue
+
+        if entry_low > 0 and float(current_price) <= (entry_low - loss_stop_points):
+            side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
+            pnl_points = float(current_price) - entry_price
+            print(
+                f"[{idx_time}] [DEBUG EXIT SIGNAL] {candle_symbol} "
+                f"Reason=LSL Entry={entry_price:.2f} Exit={float(current_price):.2f} "
+                f"LSL@{(entry_low - loss_stop_points):.2f} PnLPoints={pnl_points:.2f}"
+            )
+            if side in side_cooldown_tracker:
+                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
+            debug_last_max_check_at.pop(candle_symbol, None)
+            debug_signal_positions.pop(candle_symbol, None)
+            continue
+
+        if CONFIG.get("trailing_stop_enabled", True) and update_debug_trailing_stop_and_check(candle_symbol, float(current_price)):
+            side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
+            pnl_points = float(current_price) - entry_price
+            tsl_price = float(debug_pos.get("trailing_stop_price", current_price))
+            print(
+                f"[{idx_time}] [DEBUG EXIT SIGNAL] {candle_symbol} "
+                f"Reason=TSL Entry={entry_price:.2f} Exit={float(current_price):.2f} "
+                f"TSL@{tsl_price:.2f} PnLPoints={pnl_points:.2f}"
+            )
+            arm_pullback_reentry(candle_symbol, "TSL: trailing stop hit", float(current_price), idx_time)
+            if side in side_cooldown_tracker:
+                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
+            debug_last_max_check_at.pop(candle_symbol, None)
             debug_signal_positions.pop(candle_symbol, None)
             continue
 
@@ -1377,7 +1459,16 @@ def check_debug_sell_signals(idx_time):
         if should_exit and exit_signal == "SELL":
             clear_pullback_reentry(candle_symbol)
             st_txt = f"{st_value:.2f}" if st_value is not None else "NA"
-            print(f"[{idx_time}] [DEBUG SELL SIGNAL] {candle_symbol} TrackedBuy={debug_pos['entry_price']:.2f} ExitPrice={exit_price:.2f} ST={st_txt}")
+            pnl_points = float(exit_price) - entry_price if exit_price is not None else 0.0
+            print(
+                f"[{idx_time}] [DEBUG EXIT SIGNAL] {candle_symbol} "
+                f"Reason=ST_FLIP Entry={entry_price:.2f} Exit={exit_price:.2f} ST={st_txt} "
+                f"PnLPoints={pnl_points:.2f}"
+            )
+            side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
+            if side in side_cooldown_tracker:
+                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
+            debug_last_max_check_at.pop(candle_symbol, None)
             debug_signal_positions.pop(candle_symbol, None)
 
 
@@ -1517,7 +1608,7 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today_ce, trades_today_pe, daily_realized_pnl, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
@@ -1529,6 +1620,7 @@ def live_signal_loop():
                 exit_reason_tracker = {}
                 buy_signal_attempt_tracker = {}
                 debug_signal_positions = {}
+                debug_last_max_check_at = {}
                 pullback_reentry_tracker = {}
                 side_cooldown_tracker = {"CE": 0, "PE": 0}
                 no_data_warn_tracker = {}

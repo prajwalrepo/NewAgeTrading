@@ -29,8 +29,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 CONFIG = {
     # Fill these before running live.
- "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Nzk3NjU5MjMsImlhdCI6MTc5MTM2NTkyMywibmJmIjoxNzkxMzY1OTIzLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5ZjI1NzE4NS1iYjBkLTQwZGUtYWQ5OC1hMzM2ZjQwMDA1MzFcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiOWM0YTRhOWYtZGZmYi01MDlkLWJmNzYtMzYyOTFlMGI0M2FlXCIsXCJzZXNzaW9uSWRcIjpcImM0YzUzYmM0LWIzODAtNGJhYi05OTA4LWZjYjUzZDkzNjczZVwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My43OCwxNzIuNjkuMTIyLjIwMCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU3OTc2NTkyMzM1NyxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.BIiI2t_bcU7KQhSFjE8s-0bOyi3XTHRUovYfcrObVxWOlhnNJ0r6Zv9Y_HU0xv92r5e1-fnrkO18vxvAy8LLGA",
-        "api_secret": "DYTKCMCO77C4O6Q5SZN4YWXTXYAMDBZ2",
+      "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1ODAzODE4MDYsImlhdCI6MTc5MTk4MTgwNiwibmJmIjoxNzkxOTgxODA2LCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCJjM2U4NjQ5Ny1lOWE3LTRmZDMtOGU1Ni0zNDIyZWVkZGQ5M2JcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiODUzYmFlYjktZjY1Mi01OGVjLWJmMjgtNWQxYTg4YjNmMmVlXCIsXCJzZXNzaW9uSWRcIjpcImI2ZTk0NDEyLTM2ZDQtNDY2OC04ZWI4LWNmNjdjYjVkYjYyZlwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIyNDAxOjQ5MDA6OTNhNTplZjViOmE5OWE6NGU5ODpkODQ0OjgwYzksMTcyLjY5LjEyMi4yNDQsMzUuMjQxLjIzLjEyM1wiLFwidHdvRmFFeHBpcnlUc1wiOjI1ODAzODE4MDY1NzIsXCJ2ZW5kb3JOYW1lXCI6XCJncm93d0FwaVwifSIsImlzcyI6ImFwZXgtYXV0aC1wcm9kLWFwcCJ9.56WwEZge38A0JoDjA9623K9dispOCFjMp7kqK-iKh3gp8it5gLCpMtYhkMAhicbZSvNaIdBek_ORNrRyhrW2eA",
+         #"api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
+                 
+          #"api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
+         "api_secret":"VBK5MZN4HE3OUEIP2CFAXZO3MHDUPGH6",
    
 
     "commodity_root": "CRUDEOILM",
@@ -107,6 +110,8 @@ CONFIG = {
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 2,
     "max_trades_per_day_pe": 2,
+    "max_profit_per_day": 10000,
+    "max_loss_per_day": 5000,
 
     # Stops
     # Decimal values are supported, for example 0.1, 0.5, or 1.2.
@@ -117,7 +122,7 @@ CONFIG = {
     "max_profit_booking_enabled": True,
     "max_profit_booking_points": 3.0,
     "max_profit_check_interval_sec": 200,
-    "buy_cooldown_candles": 0,
+    "buy_cooldown_candles": 2,
     "exit_order_cooldown_sec": 90,
 
     "DEBUG": False,
@@ -219,6 +224,7 @@ candle_to_side = {}
 order_expiry_to_candle_expiry = {}
 trades_today_ce = 0
 trades_today_pe = 0
+daily_realized_pnl = 0.0
 exit_attempt_tracker = {}
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 last_option_signal_candle = {}
@@ -227,6 +233,7 @@ pullback_reentry_tracker = {}
 last_max_profit_check_at = {}
 loop_candle_cache = {}
 loop_price_cache = {}
+active_future_reference = {"entry": None, "symbol": None}
 
 
 WEEKDAY_NAME_TO_INT = {
@@ -842,14 +849,36 @@ def clear_pullback_reentry(candle_symbol):
 
 def get_underlying_reference_price():
     future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-    future_selected = _select_nearest_expiry(future_entries)
-    if future_selected is None:
-        return None
+    if not future_entries:
+        active_future_reference["entry"] = None
+        active_future_reference["symbol"] = None
+        return None, None
 
-    # Use the dated futures candle symbol selected at startup. Probing several
-    # aliases on every cycle quickly exhausts the Groww request limit.
-    future_symbol = build_future_candle_symbol(future_selected["candle_expiry"])
-    return fetch_latest_price_1m(future_symbol)
+    active_entry = active_future_reference.get("entry")
+    future_selected = _select_nearest_expiry(future_entries)
+    candidates = []
+
+    for entry in (active_entry, future_selected, *future_entries):
+        if not isinstance(entry, dict):
+            continue
+        candle_expiry = entry.get("candle_expiry")
+        if not candle_expiry:
+            continue
+        if any(existing.get("candle_expiry") == candle_expiry for existing in candidates):
+            continue
+        candidates.append(entry)
+
+    for entry in candidates:
+        future_symbol = build_future_candle_symbol(entry["candle_expiry"])
+        price = fetch_latest_price_1m(future_symbol)
+        if price is not None:
+            active_future_reference["entry"] = entry
+            active_future_reference["symbol"] = future_symbol
+            return price, future_symbol
+
+    active_future_reference["entry"] = future_selected
+    active_future_reference["symbol"] = build_future_candle_symbol(future_selected["candle_expiry"]) if future_selected else None
+    return None, active_future_reference["symbol"]
 
 
 def option_has_flip_buy_signal(candle_symbol, idx_time):
@@ -1052,6 +1081,18 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
             print(f"[BLOCKED] Trade limit {side}: {cnt}/{max_allowed}")
             return None
 
+        # Check daily profit/loss limits
+        max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
+        max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
+        
+        if max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit:
+            print(f"[BLOCKED] Daily profit limit reached: {daily_realized_pnl:.2f} >= {max_profit_limit:.2f}")
+            return None
+        
+        if max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit:
+            print(f"[BLOCKED] Daily loss limit reached: {daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}")
+            return None
+
         if side_cooldown_tracker.get(side, 0) > 0:
             return None
 
@@ -1175,6 +1216,12 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         if candle_symbol not in positions or positions[candle_symbol].get("status") != "OPEN":
             return None
 
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={candle_symbol} "
+            f"Price={float(price):.2f} Reason={reason}",
+            flush=True,
+        )
         live_qty = int(positions[candle_symbol].get("qty", 0))
         qty_units = live_qty if qty is None else min(int(qty), live_qty)
         if qty_units <= 0:
@@ -1212,6 +1259,32 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         return None
 
 
+def wait_until_next_interval():
+    now = datetime.now()
+    interval_str = str(CONFIG.get("candle_interval") or "1M").upper()
+    interval_min = int(interval_str.replace("M", "")) if "M" in interval_str else 1
+    if interval_min <= 0:
+        interval_min = 1
+
+    cur_min = now.minute
+    cur_sec = now.second
+    since = cur_min % interval_min
+    if since == 0 and cur_sec >= 2:
+        next_min = cur_min + interval_min
+    else:
+        next_min = cur_min + (interval_min - since)
+    if next_min >= 60:
+        next_min -= 60
+
+    next_time = now.replace(minute=next_min, second=2, microsecond=0)
+    if next_time <= now:
+        next_time += timedelta(minutes=interval_min)
+
+    wait_sec = (next_time - now).total_seconds()
+    if wait_sec > 0:
+        time.sleep(wait_sec)
+
+
 def live_signal_loop():
     last_printed_time = None
     last_wait_log = 0.0
@@ -1223,7 +1296,7 @@ def live_signal_loop():
             # startup logs and repeated expiry selection prints.
             if not contract_universe.get("CE") and not contract_universe.get("PE"):
                 if not build_contract_universe():
-                    time.sleep(30)
+                    wait_until_next_interval()
                     continue
 
             now_ist = get_trading_now()
@@ -1232,27 +1305,24 @@ def live_signal_loop():
 
             if session_state == "squareoff":
                 close_all_open_positions("SESSION_SQUAREOFF")
-                time.sleep(30)
+                wait_until_next_interval()
                 continue
 
             if session_state in {"closed_day", "pre_open"}:
-                time.sleep(30)
+                wait_until_next_interval()
                 continue
 
             if session_state not in {"entry", "manage_only"} and not tracked_contracts:
-                time.sleep(30)
+                wait_until_next_interval()
                 continue
 
-            future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-            future_selected = _select_nearest_expiry(future_entries) if future_entries else None
-            future_symbol = build_future_candle_symbol(future_selected["candle_expiry"]) if future_selected else None
-
-            underlying_price = get_underlying_reference_price()
+            underlying_price, future_symbol = get_underlying_reference_price()
             if underlying_price is None:
-                if time.time() - last_wait_log >= 30:
-                    print("[WARN] Underlying CRUDEOILM price unavailable; retrying in 30 seconds")
+                if time.time() - last_wait_log >= 5:
+                    target_symbol = future_symbol or "configured CRUDEOILM futures"
+                    print(f"[WARN] Underlying CRUDEOILM price unavailable for {target_symbol}; retrying in 5 seconds")
                     last_wait_log = time.time()
-                time.sleep(30)
+                wait_until_next_interval()
                 continue
 
             print(f"[UNDERLYING] CRUDEOILM Price={underlying_price:.2f}")
@@ -1261,12 +1331,12 @@ def live_signal_loop():
 
             atm = select_atm_contract("CE", underlying_price)
             if atm is None and not tracked_contracts:
-                time.sleep(30)
+                wait_until_next_interval()
                 continue
 
             idx_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if idx_time == last_printed_time:
-                time.sleep(10)
+                time.sleep(2)
                 continue
             last_printed_time = idx_time
             update_cooldowns_once_per_cycle()
@@ -1319,6 +1389,17 @@ def live_signal_loop():
                     print(f"[{idx_time}] [SIGNAL] CRUDEOILM {side} {signal_symbol} Close={close_price:.2f} ST={snapshot.get('st_value') if snapshot.get('st_value') is not None else 'NA'}")
                     if snapshot.get("signal") == "BUY_REENTRY":
                         print(f"[{idx_time}] [REENTRY SIGNAL] {signal_symbol} same strike pullback continuation")
+                    signal_time = str(idx_time).replace(" ", "T", 1)
+                    signal_reason = (
+                        "pullback re-entry continuation"
+                        if snapshot.get("signal") == "BUY_REENTRY"
+                        else "Supertrend flip entry"
+                    )
+                    print(
+                        f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={signal_symbol} "
+                        f"Price={float(close_price):.2f} Reason={signal_reason}",
+                        flush=True,
+                    )
                     if CONFIG.get("debug_signal_tracking_enabled", False):
                         debug_signal_positions[signal_symbol] = {
                             "order_symbol": order_symbol,
@@ -1385,10 +1466,10 @@ def live_signal_loop():
                     order_symbol = positions[symbol].get("order_symbol")
                     place_sell_order(symbol, order_symbol, float(cur), reason="TSL", qty=positions[symbol].get("qty"))
 
-            time.sleep(30)
+            wait_until_next_interval()
         except Exception as exc:
             print(f"[ERROR] signal loop: {type(exc).__name__}: {exc}")
-            time.sleep(10)
+            time.sleep(2)
 
 
 def main():

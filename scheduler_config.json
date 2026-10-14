@@ -4,7 +4,7 @@
   "global_settings": {
     "timezone": "IST",
     "timezone_offset_minutes": 330,
-    "check_interval_seconds": 60,
+    "check_interval_seconds": 5,
     "dry_run": false,
     "enable_all_day_logging": true,
     "restart_crashed_scripts": false,
@@ -24,7 +24,7 @@
       "gencinvestor@gmail.com"
     ],
     "attach_log_on_stop": true,
-    "notes": "When enabled=true, the scheduler sends one mail when a script starts and one more when it stops or crashes. The stop mail attaches the script run log. Use an app password for Gmail."
+    "notes": "When enabled=true, the scheduler sends a start email and a stop/crash email with the run log and a BUY/SELL signal ledger containing time, symbol, price, and reason. Use an app password for Gmail."
   },
 
   "scripts": {
@@ -46,7 +46,7 @@
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:12",
       "run_time_end": "15:30",
-      "api_delay_seconds": 10,
+      "api_delay_seconds": 0,
       "notes": "Runs only on Wednesday and Thursday"
     },
 
@@ -64,12 +64,13 @@
     "OILMINI": {
       "script_name": "OILMINI.py",
       "description": "Crude Oil Mini Options Strategy (MCX)",
-      "enabled": true,
+      "enabled": false,
+      "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
       "run_time_start": "16:00",
       "run_time_end": "23:30",
-      "api_delay_seconds": 60,
+      "api_delay_seconds": 0,
       "notes": "Runs from 16:00 and only between the 9th and 20th day of the month"
     },
 
@@ -77,10 +78,11 @@
       "script_name": "NATGASMINI.py",
       "description": "Natural Gas Mini Options Strategy (MCX)",
       "enabled": true,
+      "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "16:30",
       "run_time_end": "23:30",
-      "api_delay_seconds": 90,
+      "api_delay_seconds": 0,
       "notes": "Runs from 16:30 on trading days"
     }
   },
@@ -102,9 +104,9 @@
       "description": "To prevent rate limit errors, increase delays",
       "steps": [
         "NIFTYIntra.api_delay_seconds = 0",
-        "SENSEXINTRA.api_delay_seconds = 60  (was 30)",
-        "OILMINI.api_delay_seconds = 120     (was 60)",
-        "NATGASMINI.api_delay_seconds = 180  (was 90)"
+        "SENSEXINTRA.api_delay_seconds = 60  (was 60)",
+        "OILMINI.api_delay_seconds = 60     (was 60)",
+        "NATGASMINI.api_delay_seconds = 60  (was 60)"
       ]
     },
 

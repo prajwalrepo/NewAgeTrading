@@ -30,8 +30,11 @@ TRADE_LOG_FILE = LOG_DIR / f"320trade_{datetime.now().strftime('%Y%m%d')}.log"
 
 
 CONFIG = {
-   "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
-           "api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
+   "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1ODAzODE4MDYsImlhdCI6MTc5MTk4MTgwNiwibmJmIjoxNzkxOTgxODA2LCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCJjM2U4NjQ5Ny1lOWE3LTRmZDMtOGU1Ni0zNDIyZWVkZGQ5M2JcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiODUzYmFlYjktZjY1Mi01OGVjLWJmMjgtNWQxYTg4YjNmMmVlXCIsXCJzZXNzaW9uSWRcIjpcImI2ZTk0NDEyLTM2ZDQtNDY2OC04ZWI4LWNmNjdjYjVkYjYyZlwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIyNDAxOjQ5MDA6OTNhNTplZjViOmE5OWE6NGU5ODpkODQ0OjgwYzksMTcyLjY5LjEyMi4yNDQsMzUuMjQxLjIzLjEyM1wiLFwidHdvRmFFeHBpcnlUc1wiOjI1ODAzODE4MDY1NzIsXCJ2ZW5kb3JOYW1lXCI6XCJncm93d0FwaVwifSIsImlzcyI6ImFwZXgtYXV0aC1wcm9kLWFwcCJ9.56WwEZge38A0JoDjA9623K9dispOCFjMp7kqK-iKh3gp8it5gLCpMtYhkMAhicbZSvNaIdBek_ORNrRyhrW2eA",
+      #"api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
+              
+       #"api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
+      "api_secret":"VBK5MZN4HE3OUEIP2CFAXZO3MHDUPGH6",
 
     # Which instrument to trade when both have expiry today.
     "expiry_priority": ["NIFTY", "SENSEX"],
@@ -41,19 +44,19 @@ CONFIG = {
     "entry_window_start": "15:19",
     "entry_window_end": "15:20",
     "strike_decision_time": "15:14",
-    "fixed_strike_price": 315,
+    "fixed_strike_price": 320,
     "force_exit_time": "15:30",
     "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
 
     # Profit / loss exits on the option premium itself.
     # +200% means the option premium reaches 3x the entry price.
     # -75% means the option premium falls to 25% of the entry price.
-    "take_profit_percent": 200.0,
-    "stop_loss_percent": 75.0,
+    "take_profit_percent": 150.0,
+    "stop_loss_percent": 30.0,
 
     # Order sizing.
     # Fallback lot size used only if instrument lot size is not configured.
-    "lot_size": 1,
+    "lot_size": 2,
     "lots_per_leg": 1,
     # Keep True to place real broker orders.
     "enable_actual_trade": True,
@@ -528,6 +531,12 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
     lots_per_leg = int(CONFIG.get("lots_per_leg", 1) or 1)
     qty = lot_size * lots_per_leg
 
+    signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+    log_event(
+        f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={order_symbol} "
+        f"Price={float(price):.2f} "
+        f"Reason=Expiry straddle entry; price source={entry_price_label} reference"
+    )
     log_event(f"[BUY ATTEMPT] {order_symbol} Qty={qty} EstEntry={float(price):.2f} Source={entry_price_label}")
 
     if not bool(CONFIG.get("enable_actual_trade", True)):
@@ -591,6 +600,11 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
 
 def place_sell_order(order_symbol, price, reason, qty):
     try:
+        signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+        log_event(
+            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
+            f"Price={float(price):.2f} Reason={reason}"
+        )
         log_event(f"[SELL ATTEMPT] {order_symbol} Qty={qty} Price={float(price):.2f} Reason={reason}")
         resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_SELL, growwapi.PRODUCT_MIS)
         order_id = resp.get("groww_order_id") if isinstance(resp, dict) else None
@@ -706,6 +720,12 @@ def monitor_open_positions(state):
         if current_price >= take_profit:
             log_event(f"[MX EXIT] {order_symbol}: Entry={entry_price:.2f}, Now={current_price:.2f}, TP>={take_profit:.2f}")
             if leg.get("paper_only"):
+                signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+                log_event(
+                    f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
+                    f"Price={float(current_price):.2f} "
+                    f"Reason=Take-profit target (paper exit)"
+                )
                 leg["closed"] = True
                 leg["exit_reason"] = "TP"
                 log_event(f"[PAPER EXIT] {order_symbol} closed on TP | EstPnL={est_pnl:.0f}")
@@ -715,6 +735,11 @@ def monitor_open_positions(state):
         elif current_price <= stop_loss:
             log_event(f"[SL EXIT] {order_symbol}: Entry={entry_price:.2f}, Now={current_price:.2f}, SL<={stop_loss:.2f}")
             if leg.get("paper_only"):
+                signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+                log_event(
+                    f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
+                    f"Price={float(current_price):.2f} Reason=Stop-loss target (paper exit)"
+                )
                 leg["closed"] = True
                 leg["exit_reason"] = "SL"
                 log_event(f"[PAPER EXIT] {order_symbol} closed on SL | EstPnL={est_pnl:.0f}")
@@ -735,6 +760,11 @@ def close_remaining_positions(state, reason):
         est_pnl = _estimated_pnl(float(leg["entry_price"]), float(current_price), leg["qty"])
         log_event(f"[FINAL EST PNL] {order_symbol} Entry={float(leg['entry_price']):.2f} ExitRef={float(current_price):.2f} Qty={leg['qty']} EstPnL={est_pnl:.0f} Reason={reason}")
         if leg.get("paper_only"):
+            signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+            log_event(
+                f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
+                f"Price={float(current_price):.2f} Reason={reason} (paper/reference exit)"
+            )
             leg["closed"] = True
             leg["exit_reason"] = reason
             log_event(f"[PAPER FINAL EXIT] {order_symbol} closed without broker order | Reason={reason}")

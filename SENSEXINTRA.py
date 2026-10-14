@@ -32,9 +32,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 CONFIG = {
- "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
-           "api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
-
+ "api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1ODAzODE4MDYsImlhdCI6MTc5MTk4MTgwNiwibmJmIjoxNzkxOTgxODA2LCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCJjM2U4NjQ5Ny1lOWE3LTRmZDMtOGU1Ni0zNDIyZWVkZGQ5M2JcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiODUzYmFlYjktZjY1Mi01OGVjLWJmMjgtNWQxYTg4YjNmMmVlXCIsXCJzZXNzaW9uSWRcIjpcImI2ZTk0NDEyLTM2ZDQtNDY2OC04ZWI4LWNmNjdjYjVkYjYyZlwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIyNDAxOjQ5MDA6OTNhNTplZjViOmE5OWE6NGU5ODpkODQ0OjgwYzksMTcyLjY5LjEyMi4yNDQsMzUuMjQxLjIzLjEyM1wiLFwidHdvRmFFeHBpcnlUc1wiOjI1ODAzODE4MDY1NzIsXCJ2ZW5kb3JOYW1lXCI6XCJncm93d0FwaVwifSIsImlzcyI6ImFwZXgtYXV0aC1wcm9kLWFwcCJ9.56WwEZge38A0JoDjA9623K9dispOCFjMp7kqK-iKh3gp8it5gLCpMtYhkMAhicbZSvNaIdBek_ORNrRyhrW2eA",
+    #"api_key": "eyJraWQiOiJaTUtjVXciLCJhbGciOiJFUzI1NiJ9.eyJleHAiOjI1Njg5NDU3MzIsImlhdCI6MTc4MDU0NTczMiwibmJmIjoxNzgwNTQ1NzMyLCJzdWIiOiJ7XCJ0b2tlblJlZklkXCI6XCI5MjM4NTRkYS0xODFmLTRmNmYtOGFkMi00M2MzMzdlM2ZhZWJcIixcInZlbmRvckludGVncmF0aW9uS2V5XCI6XCJlMzFmZjIzYjA4NmI0MDZjODg3NGIyZjZkODQ5NTMxM1wiLFwidXNlckFjY291bnRJZFwiOlwiY2QxYjY2MjMtY2MzOS00N2Q0LTkxNWYtZmVlZTE3ZjFkNTRmXCIsXCJkZXZpY2VJZFwiOlwiNjA5NWQ4NTYtZGE1My01Y2Q2LWJlZGUtMGFmZWI4NzI1N2U0XCIsXCJzZXNzaW9uSWRcIjpcIjA4MGQ0YjQ0LWJjZWEtNGI3ZC05MjcyLTMxYmJmNDI5MzUwOFwiLFwiYWRkaXRpb25hbERhdGFcIjpcIno1NC9NZzltdjE2WXdmb0gvS0EwYlAveUhIeXlXNVZKSmNyMno5V0JqMlpSTkczdTlLa2pWZDNoWjU1ZStNZERhWXBOVi9UOUxIRmtQejFFQisybTdRPT1cIixcInJvbGVcIjpcImF1dGgtdG90cFwiLFwic291cmNlSXBBZGRyZXNzXCI6XCIxMzYuMjI2LjI1My45MCwxNzIuNjkuMTIyLjE3NCwzNS4yNDEuMjMuMTIzXCIsXCJ0d29GYUV4cGlyeVRzXCI6MjU2ODk0NTczMjkzNSxcInZlbmRvck5hbWVcIjpcImdyb3d3QXBpXCJ9IiwiaXNzIjoiYXBleC1hdXRoLXByb2QtYXBwIn0.5lRo2nlPb4v5xdAp038NbKL7F5vkFFijwMNXrV4vLghxAAWrMQkAZx3CVx8zqIyySd5AQXzHTdT_-lAWB2lJLg",
+            
+     #"api_secret": "nwS5I3ex3!AB7jIPuOrFLYDXXAq!X&O)",
+    "api_secret":"VBK5MZN4HE3OUEIP2CFAXZO3MHDUPGH6",
     # Core setup
     "index_symbol": "SENSEX",
     "exchange": "BSE",
@@ -62,26 +64,30 @@ CONFIG = {
     # Entry rules
     "use_momentum_filter": True,
     "require_close_above_prev_close": True,
+    # Open-gap limit; also caps the closed signal candle's open-to-close move.
     "entry_open_gap_limit_points": 30.0,
     "flip_confirmation_window_candles": 1,
     "pullback_reentry_enabled": True,
-    "pullback_reentry_touch_tolerance_points": 8.0,
+    "pullback_reentry_touch_tolerance_points": 10.0,
+    "missed_entry_reentry_enabled": True,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
     "trading_weekdays": ["WEDNESDAY", "THURSDAY"],
     "entry_window_start": "09:13",
     "entry_window_end": "15:10",
-    "force_exit_time": "15:30",
+    "force_exit_time": "15:20",
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 10,
-    "max_lots_per_trade": 2,
-    "allocation_per_trade": 20000,
+    "max_lots_per_trade": 10,
+    "allocation_per_trade": 30000,
     "check_margin_before_order": True,
-    "max_trades_per_day_ce": 3,
-    "max_trades_per_day_pe": 3,
+    "max_trades_per_day_ce": 4,
+    "max_trades_per_day_pe": 4,
+    "max_profit_per_day": 1000,
+    "max_loss_per_day": 2000,
 
     # Risk / exits
     "special_exit_enabled": True,
@@ -95,6 +101,8 @@ CONFIG = {
     # trailing_stop_trigger_points = minimum profit required before activation
     "trailing_stop_enabled": True,
     "trailing_stop_loss_points": 15,
+    "high_premium_trailing_stop_threshold": 350,
+    "high_premium_trailing_stop_loss_points": 10,
     "trailing_stop_trigger_points": 20,
     "max_profit_check_interval_sec": 60,
     "buy_cooldown_candles": 0,
@@ -976,7 +984,8 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
     if not CONFIG.get("pullback_reentry_enabled", False):
         return
     reason_text = str(reason or "").upper()
-    if not (reason_text.startswith("MX") or reason_text.startswith("TSL")):
+    missed_entry = reason_text.startswith("MISSED_ENTRY")
+    if not (reason_text.startswith("MX") or reason_text.startswith("TSL") or missed_entry):
         pullback_reentry_tracker.pop(candle_symbol, None)
         return
 
@@ -988,6 +997,7 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
         "armed_at": idx_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_exit_price": float(exit_price),
         "reason": reason,
+        "kind": "missed_entry" if missed_entry else "exit",
     }
     print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
 
@@ -1082,17 +1092,24 @@ def check_lsl_exit():
             )
 
 
-def _update_trailing_stop_for_record(pos, current_price, symbol=None):
-    entry = float(pos.get("entry_price", 0) or 0)
-    if entry <= 0:
-        return False
-
-    stop_gap = float(
+def _trailing_stop_gap_for_entry(entry_price):
+    high_premium_threshold = float(CONFIG.get("high_premium_trailing_stop_threshold", 350))
+    if float(entry_price) > high_premium_threshold:
+        return float(CONFIG.get("high_premium_trailing_stop_loss_points", 10))
+    return float(
         CONFIG.get(
             "trailing_stop_loss_points",
             CONFIG.get("trailing_stop_gap_points", 8),
         ) or 8
     )
+
+
+def _update_trailing_stop_for_record(pos, current_price, symbol=None):
+    entry = float(pos.get("entry_price", 0) or 0)
+    if entry <= 0:
+        return False
+
+    stop_gap = float(pos.get("trailing_stop_loss_points", _trailing_stop_gap_for_entry(entry)))
     trigger_points = float(
         CONFIG.get(
             "trailing_stop_trigger_points",
@@ -1163,6 +1180,18 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
             return None
 
+        # Check daily profit/loss limits
+        max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
+        max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
+        
+        if max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit:
+            print(f"[BLOCKED] Daily profit limit reached: {daily_realized_pnl:.2f} >= {max_profit_limit:.2f}")
+            return None
+        
+        if max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit:
+            print(f"[BLOCKED] Daily loss limit reached: {daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}")
+            return None
+
         if side_cooldown_tracker.get(candle_to_side.get(candle_symbol), 0) > 0:
             return None
 
@@ -1215,6 +1244,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             exec_price = avg_price if avg_price and avg_price > 0 else price
             candle_low = float(entry_candle_low if entry_candle_low is not None else entry_candle_open)
             loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
+            trail_gap = _trailing_stop_gap_for_entry(exec_price)
             positions[candle_symbol] = {
                 "status": "OPEN",
                 "entry_price": exec_price,
@@ -1228,18 +1258,14 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 "highest_price": exec_price,
                 "stop_loss_price": candle_low - loss_stop_pips,
                 "trailing_sl_activated": False,
-                "trailing_stop_price": exec_price - float(
-                    CONFIG.get(
-                        "trailing_stop_loss_points",
-                        CONFIG.get("trailing_stop_gap_points", 8),
-                    )
-                ),
+                "trailing_stop_loss_points": trail_gap,
+                "trailing_stop_price": exec_price - trail_gap,
             }
             increment_trade_count(candle_symbol)
             clear_pullback_reentry(candle_symbol)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} Price={exec_price:.2f} EntryCandleOpen={float(entry_candle_open):.2f} EntryCandleLow={candle_low:.2f} OrderID={order_id}")
-            print(f"[{ts}] [SL LEVELS] {candle_symbol} | LSL@{(candle_low - loss_stop_pips):.2f} | MX@{exec_price + CONFIG['max_profit_booking_points']:.2f}")
+            print(f"[{ts}] [SL LEVELS] {candle_symbol} | LSL@{(candle_low - loss_stop_pips):.2f} | TSL gap={trail_gap:g}pts | MX@{exec_price + CONFIG['max_profit_booking_points']:.2f}")
             return order_id
         print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
         return None
@@ -1259,6 +1285,12 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         if candle_symbol not in positions or positions[candle_symbol].get("status") != "OPEN":
             return None
 
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={candle_symbol} "
+            f"Price={float(price):.2f} Reason={reason}",
+            flush=True,
+        )
         live_positions = get_live_open_positions()
         if candle_symbol not in live_positions:
             positions[candle_symbol]["status"] = "CLOSED"
@@ -1345,12 +1377,7 @@ def track_debug_buy_signal(candle_symbol, order_symbol, price, idx_time, entry_c
     if not CONFIG.get("debug_signal_tracking_enabled", False):
         return
     side = candle_to_side.get(candle_symbol) or infer_side_from_symbol(candle_symbol)
-    trail_gap = float(
-        CONFIG.get(
-            "trailing_stop_loss_points",
-            CONFIG.get("trailing_stop_gap_points", 8),
-        ) or 8
-    )
+    trail_gap = _trailing_stop_gap_for_entry(price)
     entry_open = float(entry_candle_open if entry_candle_open is not None else price)
     entry_low = float(entry_candle_low if entry_candle_low is not None else entry_open)
     debug_signal_positions[candle_symbol] = {
@@ -1362,12 +1389,13 @@ def track_debug_buy_signal(candle_symbol, order_symbol, price, idx_time, entry_c
         "entry_candle_low": entry_low,
         "highest_price": float(price),
         "trailing_sl_activated": False,
+        "trailing_stop_loss_points": trail_gap,
         "trailing_stop_price": float(price) - trail_gap,
         "strike": strike,
     }
     debug_last_max_check_at[candle_symbol] = None
     clear_pullback_reentry(candle_symbol)
-    print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {candle_symbol} OrderSymbol={order_symbol} Price={float(price):.2f} Side={side}")
+    print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {candle_symbol} OrderSymbol={order_symbol} Price={float(price):.2f} Side={side} TSLGap={trail_gap:g}pts")
     loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
     print(
         f"[{idx_time}] [DEBUG SL LEVELS] {candle_symbol} "
@@ -1506,8 +1534,28 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
         momentum_ok = (close_price > prev_close) if CONFIG.get("require_close_above_prev_close", True) else True
 
     open_gap_ok = abs(entry_open - prev_close) <= float(CONFIG.get("entry_open_gap_limit_points", 10.0))
+    signal_candle_body_ok = abs(close_price - entry_open) <= float(
+        CONFIG.get("entry_open_gap_limit_points", 10.0)
+    )
 
     reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
+    if (
+        reentry_candidate is None
+        and CONFIG.get("pullback_reentry_enabled", False)
+        and CONFIG.get("missed_entry_reentry_enabled", False)
+        and trend == "up"
+        and positions.get(candle_symbol, {}).get("status") != "OPEN"
+        and candle_symbol not in debug_signal_positions
+        and (not fresh_flip or not (momentum_ok and open_gap_ok))
+    ):
+        arm_pullback_reentry(
+            candle_symbol,
+            "MISSED_ENTRY: late start or rejected initial entry",
+            close_price,
+            idx_time,
+        )
+        reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
+
     reentry_ok = False
     if reentry_candidate is not None:
         if trend != "up":
@@ -1517,16 +1565,36 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
             touched_st = st_value is not None and entry_low <= (st_value + touch_tolerance)
             reclaimed_uptrend = st_value is not None and close_price > st_value
             continuation_ok = close_price > prev_high and close_price >= entry_open
-            reentry_ok = bool(touched_st and reclaimed_uptrend and continuation_ok and momentum_ok and open_gap_ok)
+            if reentry_candidate.get("kind") == "missed_entry":
+                reentry_ok = bool(
+                    signal_candle_body_ok
+                    and touched_st
+                    and reclaimed_uptrend
+                    and close_price >= entry_open
+                    and momentum_ok
+                )
+            else:
+                reentry_ok = bool(
+                    signal_candle_body_ok
+                    and touched_st
+                    and reclaimed_uptrend
+                    and continuation_ok
+                    and momentum_ok
+                    and open_gap_ok
+                )
 
-    allow_buy = bool((allow_flip and momentum_ok and open_gap_ok) or reentry_ok)
+    allow_buy = bool(
+        signal_candle_body_ok
+        and ((allow_flip and momentum_ok and open_gap_ok) or reentry_ok)
+    )
     signal = "BUY_REENTRY" if reentry_ok else ("BUY" if allow_buy else "NO_SIGNAL")
 
     if CONFIG.get("DEBUG"):
         st_txt = f"{st_value:.2f}" if st_value is not None else "NA"
         print(
             f"[OPTION CHECK] {candle_symbol} | Flip={allow_flip} | Reentry={reentry_ok} | Momentum={momentum_ok} | "
-            f"OpenGapOK={open_gap_ok} | Close={close_price:.2f} PrevClose={prev_close:.2f} Open={entry_open:.2f} ST={st_txt}"
+            f"OpenGapOK={open_gap_ok} | CandleBodyOK={signal_candle_body_ok} | "
+            f"Close={close_price:.2f} PrevClose={prev_close:.2f} Open={entry_open:.2f} ST={st_txt}"
         )
 
     return allow_buy, close_price, entry_open, entry_low, st_value, trend, signal
@@ -1720,7 +1788,8 @@ def live_signal_loop():
                     tracked_side = candle_to_side.get(tracked_symbol) or debug_pos.get("side")
                     tracked_strike = debug_pos.get("strike")
                     print_flat_market_snapshot(tracked_symbol, tracked_side, idx_time, tracked_strike)
-            elif session_state in {"entry", "manage_only"}:
+            
+            if session_state in {"entry", "manage_only"}:
                 # Use index only for ATM strike discovery, but entry is option-signal only.
                 atm = select_atm_contract("CE", idx_price)
                 if not atm:
@@ -1764,6 +1833,17 @@ def live_signal_loop():
                             buy_signal_attempt_tracker[candle_symbol] = idx_time
                             if ce_snapshot.get("signal") == "BUY_REENTRY":
                                 print(f"[{idx_time}] [REENTRY SIGNAL] {candle_symbol} same strike pullback continuation")
+                            signal_time = str(idx_time).replace(" ", "T", 1)
+                            signal_reason = (
+                                "pullback re-entry continuation"
+                                if ce_snapshot.get("signal") == "BUY_REENTRY"
+                                else "Supertrend flip entry"
+                            )
+                            print(
+                                f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason}",
+                                flush=True,
+                            )
                             track_debug_buy_signal(
                                 candle_symbol,
                                 order_symbol,
@@ -1789,6 +1869,17 @@ def live_signal_loop():
                             buy_signal_attempt_tracker[candle_symbol] = idx_time
                             if pe_snapshot.get("signal") == "BUY_REENTRY":
                                 print(f"[{idx_time}] [REENTRY SIGNAL] {candle_symbol} same strike pullback continuation")
+                            signal_time = str(idx_time).replace(" ", "T", 1)
+                            signal_reason = (
+                                "pullback re-entry continuation"
+                                if pe_snapshot.get("signal") == "BUY_REENTRY"
+                                else "Supertrend flip entry"
+                            )
+                            print(
+                                f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason}",
+                                flush=True,
+                            )
                             track_debug_buy_signal(
                                 candle_symbol,
                                 order_symbol,

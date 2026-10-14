@@ -1,5 +1,5 @@
 # =============================================================================
-# CENTRAL SCHEDULER - Coordinates all 4 stock scanner scripts
+# CENTRAL SCHEDULER - Coordinates cash and commodity trading scripts
 # 
 # Features:
 # 1. Runs scripts based on specific days & times to avoid rate limiting
@@ -17,6 +17,7 @@ import logging
 import threading
 import subprocess
 import time
+import re
 import smtplib
 from collections import deque
 from datetime import datetime, timedelta, time as dt_time, timezone
@@ -65,7 +66,8 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",
-        "api_delay_seconds": 10,  # Delay before starting this script (to space out API calls)
+        "api_delay_seconds": 0,  # Start immediately; the script waits on candle boundaries itself
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
     
     "SENSEXINTRA": {
@@ -76,7 +78,8 @@ SCRIPTS_SCHEDULE = {
         "run_days_of_month": None,  # Every day of month
         "run_time_start": "09:12",
         "run_time_end": "15:30",
-        "api_delay_seconds": 10,  # Start 30 sec after NIFTY to avoid rate limit
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
     "320trade": {
@@ -87,30 +90,35 @@ SCRIPTS_SCHEDULE = {
         "run_time_start": "15:18",
         "run_time_end": "15:30",
         "api_delay_seconds": 0,
+        "send_signal_emails": True,
     },
     
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
         "enabled": False,
+        "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
         "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 10,  # Start 60 sec after NIFTY
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
     
     "NATGASMINI": {
         "script_name": "NATGASMINI.py",
         "description": "Natural Gas Mini Options Strategy",
         "enabled": True,
+        "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": None,  # Every day of the month
         "run_time_start": "16:30",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 10,  # Start 90 sec after NIFTY
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 }
 
@@ -120,7 +128,7 @@ SCRIPTS_SCHEDULE = {
 # ============================================================================
 CONFIG = {
     "timezone_offset_minutes": 330,  # IST (UTC+5:30)
-    "check_interval_seconds": 60,    # Check every 60 seconds if script should run
+    "check_interval_seconds": 5,     # Check frequently so scripts start right at the market window and candle boundary
     "dry_run": False,                # Set True to test without sending broker requests
     "enable_all_day_logging": True,  # Keep logs running all day
     "restart_crashed_scripts": False,  # Auto-restart if script crashes
@@ -136,6 +144,7 @@ CONFIG = {
         "from_email": "",
         "to_emails": [],
         "attach_log_on_stop": True,
+        "send_on_signals": True,  # Send email alerts on buy/sell signals
     },
 }
 
@@ -203,7 +212,13 @@ def load_scheduler_config():
                 continue
             if script_key not in SCRIPTS_SCHEDULE:
                 SCRIPTS_SCHEDULE[script_key] = {}
+            previous_enabled = SCRIPTS_SCHEDULE[script_key].get("enabled")
             _merge_dict(SCRIPTS_SCHEDULE[script_key], overrides)
+            current_enabled = SCRIPTS_SCHEDULE[script_key].get("enabled")
+            if "enabled" in overrides and previous_enabled != current_enabled:
+                logger.info(
+                    f"[CONFIG] {script_key}.enabled overridden from {previous_enabled} to {current_enabled} by {CONFIG_FILE.name}"
+                )
 
     logger.info(f"[CONFIG] Loaded scheduler settings from {CONFIG_FILE.name}")
 
@@ -392,6 +407,8 @@ def send_script_stop_email(run_context, script_config, ended_at, reason, exit_co
     attachment_path = run_context.get("run_log_path") if attach_log else None
     status_word = "crashed" if reason == "Process exited unexpectedly" else "stopped"
     failure_summary = run_context.get("failure_summary")
+    trade_signals = run_context.get("trade_signals", [])
+    signal_summary = format_trade_signal_summary(trade_signals)
     subject = f"[{run_context['config_key']}] {status_word} at {_format_time_component(ended_at)} IST"
     body = (
         f"Script {status_word}\n"
@@ -402,7 +419,8 @@ def send_script_stop_email(run_context, script_config, ended_at, reason, exit_co
         f"Reason: {reason}\n"
         f"Exit code: {exit_code}\n"
         f"Summary: {failure_summary or 'n/a'}\n"
-        f"Log file: {Path(attachment_path).name if attachment_path else 'not attached'}"
+        f"Log file: {Path(attachment_path).name if attachment_path else 'not attached'}\n\n"
+        f"BUY/SELL signal ledger:\n{signal_summary}"
     )
     send_email_notification(subject, body, attachment_path=attachment_path)
 
@@ -418,6 +436,10 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+
+    output_thread = run_context.get("output_thread")
+    if output_thread is not None and output_thread is not threading.current_thread():
+        output_thread.join()
 
     ended_at = get_ist_time()
     exit_code = process.poll()
@@ -454,6 +476,23 @@ def clear_failure_block_if_needed(config_key, script_config, blocked_failures):
     """Allow retries again after the active run window has ended."""
     if config_key in blocked_failures and not should_script_run_now(script_config):
         blocked_failures.pop(config_key, None)
+
+
+def get_conflicting_running_script(config_key, script_config, running_processes):
+    """Return another running script in the same exclusive group, if any."""
+    exclusive_group = str(script_config.get("exclusive_group") or "").strip()
+    if not exclusive_group:
+        return None
+
+    for other_key, run_context in running_processes.items():
+        if other_key == config_key:
+            continue
+        if run_context["process"].poll() is not None:
+            continue
+        other_group = str(SCRIPTS_SCHEDULE.get(other_key, {}).get("exclusive_group") or "").strip()
+        if other_group == exclusive_group:
+            return other_key
+    return None
 
 
 def handle_process_state_changes(running_processes, script_launch_logged, blocked_failures):
@@ -547,13 +586,143 @@ def should_script_run_now(script_config):
     # If run_days_of_month is None, allow any day of month
     
     # Check if current time is within trading window
-    if not (run_start <= current_time <= run_end):
+    if not (run_start <= current_time < run_end):
         return False
     
     return True
 
 
-def capture_script_output(config_key, process, run_log_path, run_context):
+def send_signal_email(config_key, signal_type, signal_line):
+    """Send email alert for detected buy/sell signal."""
+    subject = f"[SIGNAL] {config_key}: {signal_type}"
+    body = (
+        f"Trading signal detected\n"
+        f"Script: {config_key}\n"
+        f"Signal: {signal_type}\n"
+        f"Time: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+        f"Details: {signal_line}\n"
+    )
+    send_email_notification(subject, body)
+
+
+TRADE_SIGNAL_PATTERN = re.compile(
+    r"\[TRADE SIGNAL\]\s+Side=(BUY|SELL)\s+Time=(\S+)\s+"
+    r"Symbol=(\S+)\s+Price=([-+]?\d+(?:\.\d+)?)\s+Reason=(.+)",
+    re.IGNORECASE,
+)
+DEBUG_EXIT_SIGNAL_PATTERN = re.compile(
+    r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+"
+    r"\[DEBUG EXIT SIGNAL\]\s+(\S+)\s+Reason=(.*?)\s+"
+    r"Entry=[-+]?\d+(?:\.\d+)?\s+Exit=([-+]?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+DEBUG_SELL_SIGNAL_PATTERN = re.compile(
+    r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+"
+    r"\[DEBUG SELL SIGNAL\]\s+(\S+)\s+TrackedBuy=[-+]?\d+(?:\.\d+)?\s+"
+    r"ExitPrice=([-+]?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def record_trade_signal(output_line, run_context):
+    """Add a structured strategy signal to this script run's final email ledger."""
+    output = str(output_line)
+    match = TRADE_SIGNAL_PATTERN.search(output)
+    if match:
+        side, signal_time, symbol, price, reason = match.groups()
+        event = {
+            "side": side.upper(),
+            "time": signal_time.replace("T", " "),
+            "symbol": symbol,
+            "price": float(price),
+            "reason": reason.strip(),
+        }
+    else:
+        match = DEBUG_EXIT_SIGNAL_PATTERN.search(output)
+        if match:
+            signal_time, symbol, reason, price = match.groups()
+            event = {
+                "side": "SELL",
+                "time": signal_time,
+                "symbol": symbol,
+                "price": float(price),
+                "reason": reason.strip(),
+            }
+        else:
+            match = DEBUG_SELL_SIGNAL_PATTERN.search(output)
+            if match:
+                signal_time, symbol, price = match.groups()
+                event = {
+                    "side": "SELL",
+                    "time": signal_time,
+                    "symbol": symbol,
+                    "price": float(price),
+                    "reason": "Direction changed to down (signal-tracking position)",
+                }
+            else:
+                return
+
+    run_context.setdefault("trade_signals", []).append(event)
+    logger.info(
+        f"[{run_context['config_key']}] [SIGNAL LEDGER] "
+        f"{event['side']} {event['time']} {event['symbol']} "
+        f"Price={event['price']:.2f} Reason={event['reason']}"
+    )
+
+
+def format_trade_signal_summary(trade_signals):
+    """Format all recorded strategy signals for the end-of-run email."""
+    if not trade_signals:
+        return "No BUY or SELL signals were recorded during this run."
+
+    lines = [
+        f"Total signals: {len(trade_signals)} "
+        f"(BUY: {sum(signal['side'] == 'BUY' for signal in trade_signals)}, "
+        f"SELL: {sum(signal['side'] == 'SELL' for signal in trade_signals)})",
+        "Time (IST) | Side | Symbol | Price | Reason",
+    ]
+    lines.extend(
+        f"{signal['time']} | {signal['side']} | {signal['symbol']} | "
+        f"{signal['price']:.2f} | {signal['reason']}"
+        for signal in trade_signals
+    )
+    return "\n".join(lines)
+
+
+def detect_and_alert_signals(config_key, output_line, script_config=None):
+    """Detect buy/sell signals in script output and send email alerts."""
+    # Check if global email notifications are enabled
+    global_enabled = CONFIG.get("email_notifications", {}).get("send_on_signals", True)
+    if not global_enabled:
+        return
+    
+    # Check if this specific script has signal emails enabled
+    script_enabled = True
+    if script_config:
+        script_enabled = script_config.get("send_signal_emails", True)
+    
+    if not script_enabled:
+        return
+
+    output_upper = str(output_line).upper()
+    
+    # Detect buy signals
+    if "[BUY" in output_upper and ("CONFIRMED" in output_upper or "SIGNAL" in output_upper):
+        send_signal_email(config_key, "BUY SIGNAL", output_line)
+    
+    # Detect sell signals
+    elif "[SELL" in output_upper and ("CONFIRMED" in output_upper or "SIGNAL" in output_upper):
+        send_signal_email(config_key, "SELL SIGNAL", output_line)
+    
+    # Detect debug signals
+    elif "[DEBUG BUY SIGNAL" in output_upper:
+        send_signal_email(config_key, "DEBUG BUY TRACKED", output_line)
+    
+    elif "[DEBUG SELL SIGNAL" in output_upper or "[DEBUG EXIT SIGNAL" in output_upper:
+        send_signal_email(config_key, "DEBUG SELL TRACKED", output_line)
+
+
+def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
     """Read and log script output in real-time"""
     try:
         with Path(run_log_path).open("a", encoding="utf-8") as script_log_handle:
@@ -567,6 +736,9 @@ def capture_script_output(config_key, process, run_log_path, run_context):
                     logger.info(f"[{config_key}] {output}")
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
+                    record_trade_signal(output, run_context)
+                    # Detect and alert on trading signals (with script-specific config)
+                    detect_and_alert_signals(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
 
@@ -589,7 +761,7 @@ def launch_script(script_name, config_key):
         )
         
         # Build command with dry-run flag if enabled
-        cmd = [sys.executable, str(script_path)]
+        cmd = [sys.executable, "-u", str(script_path)]
         
         if CONFIG.get("dry_run"):
             cmd.append("--dry-run")
@@ -615,14 +787,16 @@ def launch_script(script_name, config_key):
             "started_at": started_at,
             "run_log_path": run_log_path,
             "recent_output": deque(maxlen=25),
+            "trade_signals": [],
             "failure_signature": None,
             "failure_summary": None,
         }
         
         # Start output capture in a separate thread
+        script_config = SCRIPTS_SCHEDULE.get(config_key, {})
         output_thread = threading.Thread(
             target=capture_script_output,
-            args=(config_key, process, run_log_path, run_context),
+            args=(config_key, process, run_log_path, run_context, script_config),
             daemon=True
         )
         output_thread.start()
@@ -644,6 +818,8 @@ def log_startup_status():
     logger.info(f"[MODE] {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
     logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} configured")
     logger.info(f"[LOG_RETENTION] {CONFIG.get('log_retention_days', 2)} day(s)")
+    email_enabled = CONFIG.get("email_notifications", {}).get("enabled", False)
+    logger.info(f"[EMAIL] {'Enabled' if email_enabled else 'Disabled'}")
     logger.info("=" * 80)
 
 
@@ -671,6 +847,11 @@ def scheduler_loop():
                     if config_key in blocked_failures:
                         continue
 
+                    conflicting_script = get_conflicting_running_script(config_key, script_config, running_processes)
+                    if conflicting_script is not None:
+                        logger.info(f"[SKIP] {config_key} not started because {conflicting_script} is already running")
+                        continue
+
                     # Script should run but isn't running - start it
                     
                     # Calculate delay for this script (to avoid rate limiting)
@@ -683,6 +864,10 @@ def scheduler_loop():
                     if config_key in blocked_failures:
                         continue
                     if config_key in running_processes and running_processes[config_key]["process"].poll() is None:
+                        continue
+                    conflicting_script = get_conflicting_running_script(config_key, script_config, running_processes)
+                    if conflicting_script is not None:
+                        logger.info(f"[SKIP] {config_key} not started because {conflicting_script} is already running")
                         continue
                     
                     # Launch the script

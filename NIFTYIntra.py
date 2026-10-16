@@ -83,6 +83,7 @@ CONFIG = {
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
+    "max_reentries_per_day": 2,
     "max_profit_per_day": 10000,
     "max_loss_per_day": 3000,
 
@@ -97,12 +98,12 @@ CONFIG = {
     # trailing_stop_loss_points = gap kept behind the highest price
     # trailing_stop_trigger_points = minimum profit required before activation
     "trailing_stop_enabled": True,
-    "trailing_stop_loss_points": 8,
+    "trailing_stop_loss_points": 10,
     "high_premium_trailing_stop_threshold": 150,
     "high_premium_trailing_stop_extra_points": 5,
-    "trailing_stop_trigger_points": 8,
+    "trailing_stop_trigger_points": 10,
     "max_profit_check_interval_sec": 60,
-    "buy_cooldown_candles": 0,
+    "buy_cooldown_candles": 3,
     "exit_order_cooldown_sec": 90,
 
     # API retry
@@ -206,6 +207,7 @@ debug_last_max_check_at = {}
 pullback_reentry_tracker = {}
 last_open_position_risk_log_key = None
 side_cooldown_tracker = {"CE": 0, "PE": 0}
+reentries_today = {"CE": 0, "PE": 0}
 no_data_warn_tracker = {}
 contract_universe = {"CE": [], "PE": []}
 order_to_candle = {}
@@ -994,6 +996,10 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
         return
 
     side = candle_to_side.get(candle_symbol)
+    if reentries_today.get(side, 0) >= int(CONFIG.get("max_reentries_per_day", 2)):
+        pullback_reentry_tracker.pop(candle_symbol, None)
+        print(f"[REENTRY BLOCKED] {side}: daily re-entry limit reached")
+        return
     pullback_reentry_tracker[candle_symbol] = {
         "side": side,
         "strike": next((rec.get("strike") for rec in contract_universe.get(side, []) if rec.get("candle_symbol") == candle_symbol), None),
@@ -1007,14 +1013,14 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
     print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
 
 
+def start_side_buy_cooldown(side):
+    if side in side_cooldown_tracker:
+        # Cooldowns are decremented before each candle's entry checks.
+        side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0) + 1
+
+
 def clear_pullback_reentry(candle_symbol):
     pullback_reentry_tracker.pop(candle_symbol, None)
-
-
-def mark_pullback_reentry_consumed(candle_symbol):
-    reentry_state = pullback_reentry_tracker.get(candle_symbol)
-    if reentry_state is not None:
-        reentry_state["consumed"] = True
 
 
 def close_open_side(side, reason):
@@ -1215,19 +1221,21 @@ def check_trailing_stop_exit():
                 float(cur),
                 reason="TSL: trailing stop hit",
                 qty=pos.get("qty"),
+                allow_reentry=True,
             )
 
 
-def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None):
+def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None, is_reentry=False):
     try:
         if has_open_position():
             print(f"[BUY BLOCKED] {candle_symbol}: another position is already open")
             return None
 
-        can_trade, cnt, max_allowed = check_trade_limit(candle_symbol)
-        if not can_trade:
-            print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
-            return None
+        if not is_reentry:
+            can_trade, cnt, max_allowed = check_trade_limit(candle_symbol)
+            if not can_trade:
+                print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
+                return None
 
         # Check daily profit/loss limits
         max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
@@ -1241,7 +1249,12 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             print(f"[BLOCKED] Daily loss limit reached: {daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}")
             return None
 
-        if side_cooldown_tracker.get(candle_to_side.get(candle_symbol), 0) > 0:
+        side = candle_to_side.get(candle_symbol)
+        if is_reentry and side_cooldown_tracker.get(side, 0) > 0:
+            print(f"[REENTRY BLOCKED] {candle_symbol}: {side_cooldown_tracker.get(side)}-candle cooldown active")
+            return None
+        if is_reentry and reentries_today.get(side, 0) >= int(CONFIG.get("max_reentries_per_day", 2)):
+            print(f"[REENTRY BLOCKED] {candle_symbol}: daily re-entry limit reached")
             return None
 
         lot_size = int(CONFIG.get("lot_size", 1) or 1)
@@ -1311,7 +1324,10 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 "trailing_stop_loss_points": trail_gap,
                 "trailing_stop_price": exec_price - trail_gap,
             }
-            increment_trade_count(candle_symbol)
+            if is_reentry:
+                reentries_today[side] = reentries_today.get(side, 0) + 1
+            else:
+                increment_trade_count(candle_symbol)
             clear_pullback_reentry(candle_symbol)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
@@ -1324,7 +1340,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         return None
 
 
-def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=None):
+def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=None, allow_reentry=False):
     try:
         cooldown_sec = int(CONFIG.get("exit_order_cooldown_sec", 90))
         now_ts = datetime.now()
@@ -1385,11 +1401,12 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             positions[candle_symbol]["exit_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             positions[candle_symbol]["pnl"] = pnl
             positions[candle_symbol]["qty"] = 0
-            arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
-
             side = candle_to_side.get(candle_symbol)
-            if side in side_cooldown_tracker:
-                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
+            if allow_reentry:
+                arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
+                start_side_buy_cooldown(side)
+            else:
+                clear_pullback_reentry(candle_symbol)
             return order_id
         return None
     except Exception as exc:
@@ -1500,8 +1517,6 @@ def check_debug_sell_signals(idx_time):
                         f"Reason=MX +{max_profit_points:g}pts Entry={entry_price:.2f} Exit={float(current_price):.2f} "
                         f"PnLPoints={pnl_points:.2f}"
                     )
-                    if side in side_cooldown_tracker:
-                        side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
                     debug_last_max_check_at.pop(candle_symbol, None)
                     debug_signal_positions.pop(candle_symbol, None)
                     continue
@@ -1514,8 +1529,6 @@ def check_debug_sell_signals(idx_time):
                 f"Reason=LSL Entry={entry_price:.2f} Exit={float(current_price):.2f} "
                 f"LSL@{(entry_low - loss_stop_points):.2f} PnLPoints={pnl_points:.2f}"
             )
-            if side in side_cooldown_tracker:
-                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
             debug_last_max_check_at.pop(candle_symbol, None)
             debug_signal_positions.pop(candle_symbol, None)
             continue
@@ -1529,8 +1542,6 @@ def check_debug_sell_signals(idx_time):
                 f"Reason=TSL Entry={entry_price:.2f} Exit={float(current_price):.2f} "
                 f"TSL@{tsl_price:.2f} PnLPoints={pnl_points:.2f}"
             )
-            if side in side_cooldown_tracker:
-                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
             debug_last_max_check_at.pop(candle_symbol, None)
             debug_signal_positions.pop(candle_symbol, None)
             continue
@@ -1544,8 +1555,6 @@ def check_debug_sell_signals(idx_time):
                 f"Reason=ST_FLIP PnLPoints={pnl_points:.2f}"
             )
             side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
-            if side in side_cooldown_tracker:
-                side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
             debug_last_max_check_at.pop(candle_symbol, None)
             debug_signal_positions.pop(candle_symbol, None)
 
@@ -1607,11 +1616,15 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
                 and open_gap_ok
             )
 
-    allow_buy = bool(
-        signal_candle_body_ok
-        and ((allow_flip and momentum_ok and open_gap_ok) or reentry_ok)
+    regular_buy = bool(signal_candle_body_ok and allow_flip and momentum_ok and open_gap_ok)
+    reentry_allowed = bool(
+        reentry_ok
+        and side_cooldown_tracker.get(candle_to_side.get(candle_symbol), 0) == 0
+        and reentries_today.get(candle_to_side.get(candle_symbol), 0)
+        < int(CONFIG.get("max_reentries_per_day", 2))
     )
-    signal = "BUY_REENTRY" if reentry_ok else ("BUY" if allow_buy else "NO_SIGNAL")
+    allow_buy = regular_buy or reentry_allowed
+    signal = "BUY" if regular_buy else ("BUY_REENTRY" if reentry_allowed else "NO_SIGNAL")
 
     if CONFIG.get("DEBUG") and not any(
         pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
@@ -1660,7 +1673,14 @@ def max_profit_booking_monitor_thread():
                 trigger = entry + float(CONFIG.get("max_profit_booking_points", 25))
                 if cur >= trigger:
                     print(f"[MX EXIT] {symbol} | MX@{trigger:.2f} | Trigger reached")
-                    place_sell_order(symbol, pos.get("order_symbol"), cur, reason=f"MX full profit: +{CONFIG.get('max_profit_booking_points', 25)}", qty=qty)
+                    place_sell_order(
+                        symbol,
+                        pos.get("order_symbol"),
+                        cur,
+                        reason=f"MX full profit: +{CONFIG.get('max_profit_booking_points', 25)}",
+                        qty=qty,
+                        allow_reentry=True,
+                    )
         except Exception as exc:
             print(f"[ERROR] MX monitor: {exc}")
 
@@ -1720,6 +1740,7 @@ def live_signal_loop():
                 debug_last_max_check_at = {}
                 pullback_reentry_tracker = {}
                 side_cooldown_tracker = {"CE": 0, "PE": 0}
+                reentries_today.update({"CE": 0, "PE": 0})
                 no_data_warn_tracker = {}
                 last_reset_date = current_date
                 if not build_contract_universe():
@@ -1891,9 +1912,7 @@ def live_signal_loop():
                                 entry_candle_low=ce_snapshot.get("entry_low"),
                                 strike=ce_snapshot.get("strike"),
                             )
-                            if session_state == "entry" and int(side_cooldown_tracker.get("CE", 0)) == 0:
-                                if ce_snapshot.get("signal") == "BUY_REENTRY":
-                                    mark_pullback_reentry_consumed(candle_symbol)
+                            if session_state == "entry":
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,
@@ -1901,6 +1920,7 @@ def live_signal_loop():
                                     ce_snapshot.get("entry_open"),
                                     entry_candle_low=ce_snapshot.get("entry_low"),
                                     strike=ce_snapshot.get("strike"),
+                                    is_reentry=ce_snapshot.get("signal") == "BUY_REENTRY",
                                 )
                     if pe_ok and not has_open_position():
                         candle_symbol = pe_snapshot.get("candle_symbol")
@@ -1931,9 +1951,7 @@ def live_signal_loop():
                                 entry_candle_low=pe_snapshot.get("entry_low"),
                                 strike=pe_snapshot.get("strike"),
                             )
-                            if session_state == "entry" and int(side_cooldown_tracker.get("PE", 0)) == 0:
-                                if pe_snapshot.get("signal") == "BUY_REENTRY":
-                                    mark_pullback_reentry_consumed(candle_symbol)
+                            if session_state == "entry":
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,
@@ -1941,6 +1959,7 @@ def live_signal_loop():
                                     pe_snapshot.get("entry_open"),
                                     entry_candle_low=pe_snapshot.get("entry_low"),
                                     strike=pe_snapshot.get("strike"),
+                                    is_reentry=pe_snapshot.get("signal") == "BUY_REENTRY",
                                 )
 
             wait_until_next_interval()

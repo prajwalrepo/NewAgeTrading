@@ -148,7 +148,8 @@ CONFIG = {
         "smtp_password": "",
         "from_email": "",
         "to_emails": [],
-        "send_on_signals": True,
+        "send_on_signals": False,
+        "send_daily_summary_on_stop": True,
     },
 }
 
@@ -413,6 +414,8 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
     exit_code = process.poll()
     final_log_path = finalize_run_log(run_context, ended_at, reason, exit_code=exit_code)
     logger.info(f"[STOPPED] {run_context['config_key']} stopped | Reason={reason} | ExitCode={exit_code} | Log={final_log_path.name}")
+    if reason != "Scheduler stopped by user":
+        email_daily_trade_summary(run_context, reason)
     return exit_code
 
 
@@ -567,6 +570,19 @@ TRADE_REPORT_COLUMNS = (
 TRADE_REPORT_LOCK = threading.Lock()
 
 
+def _initialize_trade_report_sheet(workbook):
+    sheet = workbook.active
+    sheet.title = "Trades"
+    sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    sheet.freeze_panes = "A2"
+    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16), start=1):
+        sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
+    sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
+    return sheet
+
+
 def parse_trade_signal(line):
     """Parse one structured trade event from script output."""
     if "[TRADE SIGNAL]" not in line:
@@ -625,15 +641,7 @@ def append_trade_to_report(config_key, trade):
                 return report_path, False
         else:
             workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = "Trades"
-            sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
-            for cell in sheet[1]:
-                cell.font = Font(bold=True)
-            sheet.freeze_panes = "A2"
-            for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16), start=1):
-                sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
-            sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
+            sheet = _initialize_trade_report_sheet(workbook)
 
         row = []
         for column in TRADE_REPORT_COLUMNS:
@@ -649,6 +657,74 @@ def append_trade_to_report(config_key, trade):
         sheet.auto_filter.ref = sheet.dimensions
         workbook.save(report_path)
     return report_path, True
+
+
+def _trade_report_for_run(run_context):
+    trade_date = run_context["started_at"].strftime("%Y%m%d")
+    return RUN_LOG_DIR / f"trades_{run_context['config_key']}_{trade_date}.xlsx"
+
+
+def _ensure_trade_report_exists(report_path):
+    with TRADE_REPORT_LOCK:
+        if report_path.exists():
+            return
+        workbook = Workbook()
+        _initialize_trade_report_sheet(workbook)
+        workbook.save(report_path)
+
+
+def _trade_report_summary(report_path):
+    workbook = load_workbook(report_path, read_only=True, data_only=True)
+    try:
+        sheet = workbook["Trades"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        side_index = headers.index("Side")
+        order_index = headers.index("Order Placed")
+        total = buys = sells = orders_placed = 0
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not any(value is not None for value in row[:len(TRADE_REPORT_COLUMNS)]):
+                continue
+            total += 1
+            side = str(row[side_index] or "").upper()
+            buys += side == "BUY"
+            sells += side == "SELL"
+            orders_placed += str(row[order_index] or "").upper() == "YES"
+        return total, buys, sells, orders_placed
+    finally:
+        workbook.close()
+
+
+def email_daily_trade_summary(run_context, reason):
+    """Send one daily workbook summary when a trading script stops."""
+    email_cfg = CONFIG.get("email_notifications", {})
+    if not email_cfg.get("enabled", False) or not email_cfg.get("send_daily_summary_on_stop", True):
+        return
+    if run_context.get("daily_summary_email_sent"):
+        return
+    run_context["daily_summary_email_sent"] = True
+
+    report_path = _trade_report_for_run(run_context)
+    try:
+        _ensure_trade_report_exists(report_path)
+        total, buys, sells, orders_placed = _trade_report_summary(report_path)
+    except Exception as exc:
+        logger.error(f"[REPORT] Failed to prepare daily summary for {run_context['config_key']}: {exc}")
+        return
+
+    trading_date = run_context["started_at"].strftime("%Y-%m-%d")
+    subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
+    body = (
+        f"Daily trading summary\n"
+        f"Script: {run_context['config_key']}\n"
+        f"Trading date: {trading_date}\n"
+        f"Stop reason: {reason}\n"
+        f"Trade signals: {total}\n"
+        f"Buy signals: {buys}\n"
+        f"Sell signals: {sells}\n"
+        f"Orders placed: {orders_placed}\n"
+        f"Excel report: {report_path.name}"
+    )
+    send_email_notification(subject, body, attachment_path=report_path)
 
 
 def email_trade_signal(config_key, trade, report_path):
@@ -673,12 +749,7 @@ def email_trade_signal(config_key, trade, report_path):
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
-    """Record and email each unique buy/sell trade signal once."""
-    if not CONFIG.get("email_notifications", {}).get("send_on_signals", True):
-        return
-    if script_config and not script_config.get("send_signal_emails", True):
-        return
-
+    """Record each unique trade signal and optionally email it immediately."""
     trade = parse_trade_signal(output_line)
     if trade is None:
         return
@@ -687,7 +758,9 @@ def process_trade_signal(config_key, output_line, script_config=None):
     except Exception as exc:
         logger.error(f"[REPORT] Failed to record trade signal for {config_key}: {exc}")
         return
-    if is_new:
+    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
+    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
+    if is_new and send_on_signals and script_emails_enabled:
         email_trade_signal(config_key, trade, report_path)
 
 

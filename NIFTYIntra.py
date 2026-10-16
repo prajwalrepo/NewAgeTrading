@@ -39,7 +39,7 @@ CONFIG = {
     # Core setup
     "index_symbol": "NIFTY",
     "exchange": "NSE",
-    "candle_interval": "2M",
+    "candle_interval": "1M",
     "atr_period": 10,
     "factor": 3.0,
 

@@ -204,6 +204,7 @@ buy_signal_attempt_tracker = {}
 debug_signal_positions = {}
 debug_last_max_check_at = {}
 pullback_reentry_tracker = {}
+last_open_position_risk_log_key = None
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 no_data_warn_tracker = {}
 contract_universe = {"CE": [], "PE": []}
@@ -893,7 +894,7 @@ def verify_order_execution(order_id, symbol, fallback_price=None):
         avg_price = details.get("average_fill_price") or details.get("price")
         avg_price = float(avg_price) if avg_price else (fallback_price or 0)
         if CONFIG.get("DEBUG"):
-            print(f"[GROWW ORDER STATUS] Symbol={symbol} | ID={order_id} | FinalStatus={final_status} | AvgPrice={avg_price:.2f}")
+            print(f"[GROWW ORDER STATUS] Symbol={symbol} | ID={order_id} | FinalStatus={final_status}")
         return final_status, avg_price, details
     except Exception as exc:
         if CONFIG.get("DEBUG"):
@@ -1029,6 +1030,10 @@ def close_open_side(side, reason):
 def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = option_has_flip_buy_signal(candle_symbol, idx_time)
     position = positions.get(candle_symbol)
+    has_open_position_now = any(
+        pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
+        for pos in positions.values()
+    )
     pnl_text = "NA"
     if position and int(position.get("qty", 0)) > 0 and last_price is not None:
         entry_price = float(position.get("entry_price", 0) or 0)
@@ -1036,7 +1041,10 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         if entry_price > 0 and qty_units > 0:
             pnl_text = f"{(last_price - entry_price) * qty_units:.0f}"
     if last_price is None:
-        print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA PnL={pnl_text}")
+        if has_open_position_now:
+            print_open_position_risk_levels(idx_time)
+        else:
+            print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA PnL={pnl_text}")
         return {
             "ok": ok,
             "last_price": None,
@@ -1054,10 +1062,13 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     dir_text = opt_trend if opt_trend is not None else "NA"
     open_text = f"{entry_open:.2f}" if entry_open is not None else "NA"
     low_text = f"{entry_low:.2f}" if entry_low is not None else "NA"
-    print(
-        f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
-        f"Signal={signal} Direction={dir_text} PnL={pnl_text}"
-    )
+    if has_open_position_now:
+        print_open_position_risk_levels(idx_time)
+    else:
+        print(
+            f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
+            f"Signal={signal} Direction={dir_text} PnL={pnl_text}"
+        )
     return {
         "ok": ok,
         "last_price": last_price,
@@ -1070,6 +1081,29 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         "side": side,
         "strike": strike,
     }
+
+
+def print_open_position_risk_levels(idx_time):
+    global last_open_position_risk_log_key
+
+    open_positions = [
+        (symbol, pos)
+        for symbol, pos in positions.items()
+        if pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
+    ]
+    log_key = (idx_time, tuple(symbol for symbol, _ in open_positions))
+    if not open_positions or log_key == last_open_position_risk_log_key:
+        return
+
+    for symbol, pos in open_positions:
+        entry_price = float(pos.get("entry_price", 0) or 0)
+        lsl = float(pos.get("stop_loss_price", 0) or 0)
+        mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
+        tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
+        tsl_state = "ACTIVE" if pos.get("trailing_sl_activated", False) else "INACTIVE"
+        print(f"[{idx_time}] [POSITION RISK] {symbol} | LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})")
+
+    last_open_position_risk_log_key = log_key
 
 
 def check_lsl_exit():
@@ -1124,7 +1158,7 @@ def _update_trailing_stop_for_record(pos, current_price, symbol=None):
         pos["trailing_sl_activated"] = True
         pos["trailing_stop_price"] = highest - stop_gap
         if CONFIG.get("DEBUG"):
-            print(f"[DEBUG] TRAILING ACTIVATED {symbol or 'UNKNOWN'} | High={highest:.2f} TSL={pos['trailing_stop_price']:.2f}")
+            print(f"[TSL] {symbol or 'UNKNOWN'} | TSL@{pos['trailing_stop_price']:.2f} (ACTIVE)")
 
     if bool(pos.get("trailing_sl_activated", False)):
         current_tsl = float(pos.get("trailing_stop_price", entry - stop_gap))
@@ -1280,8 +1314,8 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             increment_trade_count(candle_symbol)
             clear_pullback_reentry(candle_symbol)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} Price={exec_price:.2f} EntryCandleOpen={float(entry_candle_open):.2f} EntryCandleLow={candle_low:.2f} OrderID={order_id}")
-            print(f"[{ts}] [SL LEVELS] {candle_symbol} | LSL@{(candle_low - loss_stop_pips):.2f} | TSL gap={trail_gap:g}pts | MX@{exec_price + CONFIG['max_profit_booking_points']:.2f}")
+            print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
+            print_open_position_risk_levels(ts)
             return order_id
         print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
         return None
@@ -1504,12 +1538,10 @@ def check_debug_sell_signals(idx_time):
         should_exit, exit_price, st_value, exit_signal = option_has_flip_down_exit_signal(candle_symbol, idx_time, allow_debug_tracking=True)
         if should_exit and exit_signal == "SELL":
             clear_pullback_reentry(candle_symbol)
-            st_txt = f"{st_value:.2f}" if st_value is not None else "NA"
             pnl_points = float(exit_price) - entry_price if exit_price is not None else 0.0
             print(
                 f"[{idx_time}] [DEBUG EXIT SIGNAL] {candle_symbol} "
-                f"Reason=ST_FLIP Entry={entry_price:.2f} Exit={exit_price:.2f} ST={st_txt} "
-                f"PnLPoints={pnl_points:.2f}"
+                f"Reason=ST_FLIP PnLPoints={pnl_points:.2f}"
             )
             side = debug_pos.get("side") or infer_side_from_symbol(candle_symbol)
             if side in side_cooldown_tracker:
@@ -1581,7 +1613,10 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
     )
     signal = "BUY_REENTRY" if reentry_ok else ("BUY" if allow_buy else "NO_SIGNAL")
 
-    if CONFIG.get("DEBUG"):
+    if CONFIG.get("DEBUG") and not any(
+        pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
+        for pos in positions.values()
+    ):
         st_txt = f"{st_value:.2f}" if st_value is not None else "NA"
         print(
             f"[OPTION CHECK] {candle_symbol} | Flip={allow_flip} | Reentry={reentry_ok} | Momentum={momentum_ok} | "
@@ -1624,7 +1659,7 @@ def max_profit_booking_monitor_thread():
 
                 trigger = entry + float(CONFIG.get("max_profit_booking_points", 25))
                 if cur >= trigger:
-                    print(f"[MX EXIT] {symbol}: Entry={entry:.2f}, Now={cur:.2f}, Trigger>={trigger:.2f}")
+                    print(f"[MX EXIT] {symbol} | MX@{trigger:.2f} | Trigger reached")
                     place_sell_order(symbol, pos.get("order_symbol"), cur, reason=f"MX full profit: +{CONFIG.get('max_profit_booking_points', 25)}", qty=qty)
         except Exception as exc:
             print(f"[ERROR] MX monitor: {exc}")
@@ -1769,8 +1804,7 @@ def live_signal_loop():
                     continue
                 should_exit, exit_price, st_value, exit_signal = option_has_flip_down_exit_signal(symbol, idx_time)
                 if should_exit and exit_signal == "SELL":
-                    st_txt = f"{st_value:.2f}" if st_value is not None else "NA"
-                    print(f"[{idx_time}] [SELL SIGNAL] {symbol} Direction changed to down | ST={st_txt}")
+                    print(f"[{idx_time}] [SELL SIGNAL] {symbol} Reason=ST_FLIP")
                     place_sell_order(
                         symbol,
                         pos.get("order_symbol"),

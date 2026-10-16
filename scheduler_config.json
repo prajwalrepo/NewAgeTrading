@@ -23,8 +23,9 @@
     "to_emails": [
       "gencinvestor@gmail.com"
     ],
-    "send_on_signals": true,
-    "notes": "When enabled=true, send one email per unique placed buy/sell trade signal with the daily Excel trade sheet attached. Use an app password for Gmail."
+    "send_on_signals": false,
+    "send_daily_summary_on_stop": true,
+    "notes": "Trade signals are saved to a daily Excel workbook. When enabled=true, send one workbook-only daily summary after each trading script stops. Use an app password for Gmail."
   },
 
   "scripts": {

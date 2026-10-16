@@ -97,10 +97,10 @@ CONFIG = {
     # trailing_stop_loss_points = gap kept behind the highest price
     # trailing_stop_trigger_points = minimum profit required before activation
     "trailing_stop_enabled": True,
-    "trailing_stop_loss_points": 10,
+    "trailing_stop_loss_points": 8,
     "high_premium_trailing_stop_threshold": 150,
     "high_premium_trailing_stop_extra_points": 5,
-    "trailing_stop_trigger_points": 10,
+    "trailing_stop_trigger_points": 8,
     "max_profit_check_interval_sec": 60,
     "buy_cooldown_candles": 0,
     "exit_order_cooldown_sec": 90,

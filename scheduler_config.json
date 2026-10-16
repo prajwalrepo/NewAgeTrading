@@ -23,9 +23,9 @@
     "to_emails": [
       "gencinvestor@gmail.com"
     ],
-    "send_on_signals": false,
+    "send_on_signals": true,
     "send_daily_summary_on_stop": true,
-    "notes": "Trade signals are saved to a daily Excel workbook. When enabled=true, send one workbook-only daily summary after each trading script stops. Use an app password for Gmail."
+    "notes": "Signal emails are enabled for NIFTY/SENSEX/OIL/NATGAS. The 320trade script is set to send only the final 3:30 summary with CE/PE executed prices and PnL, plus the Excel workbook attachment. Use an app password for Gmail."
   },
 
   "scripts": {
@@ -37,7 +37,8 @@
       "run_time_start": "09:13",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
-      "notes": "Starts first - no delay"
+      "send_signal_emails": true,
+      "notes": "Immediate mail for every generated signal"
     },
 
     "SENSEXINTRA": {
@@ -48,7 +49,8 @@
       "run_time_start": "09:12",
       "run_time_end": "15:30",
       "api_delay_seconds": 10,
-      "notes": "Runs only on Wednesday and Thursday"
+      "send_signal_emails": true,
+      "notes": "Immediate mail for every generated signal"
     },
 
     "320trade": {
@@ -59,7 +61,8 @@
       "run_time_start": "15:18",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
-      "notes": "Runs in the 15:20-15:30 window and only trades if a configured NIFTY or SENSEX expiry matches today"
+      "send_signal_emails": false,
+      "notes": "No immediate signal emails. Final summary at 3:30 includes executed CE/PE buy/sell prices and total PnL, plus the Excel workbook."
     },
 
     "OILMINI": {
@@ -72,7 +75,8 @@
       "run_time_start": "16:00",
       "run_time_end": "23:30",
       "api_delay_seconds": 10,
-      "notes": "Runs from 16:00 and only between the 9th and 20th day of the month"
+      "send_signal_emails": true,
+      "notes": "Immediate mail for every generated signal"
     },
 
     "NATGASMINI": {
@@ -84,7 +88,8 @@
       "run_time_start": "16:30",
       "run_time_end": "23:30",
       "api_delay_seconds": 10,
-      "notes": "Runs from 16:30 on trading days"
+      "send_signal_emails": true,
+      "notes": "Immediate mail for every generated signal"
     }
   },
 

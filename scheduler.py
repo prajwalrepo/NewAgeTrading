@@ -96,6 +96,7 @@ SCRIPTS_SCHEDULE = {
         "run_time_start": "15:18",
         "run_time_end": "15:30",
         "api_delay_seconds": 0,
+        "send_signal_emails": False,  # One final summary after close, not every signal
     },
     
     "OILMINI": {
@@ -694,6 +695,62 @@ def _trade_report_summary(report_path):
         workbook.close()
 
 
+def _extract_320trade_summary(run_context):
+    """Extract the final CE/PE executed outcome from the script run log."""
+    config_key = str(run_context.get("config_key") or "").upper()
+    if config_key != "320TRADE":
+        return None
+
+    log_path = run_context.get("run_log_path")
+    if not log_path:
+        return None
+
+    path = Path(log_path)
+    if not path.exists():
+        return None
+
+    pattern = re.compile(
+        r"\[TRADE RESULT\]\s+Script=\S+\s+Side=(?P<side>\S+)\s+"
+        r"Symbol=(?P<symbol>\S+)\s+Strike=(?P<strike>\S+)\s+"
+        r"BuyAt=(?P<buy>[-+]?\d*\.?\d+)\s+"
+        r"SellAt=(?P<sell>[-+]?\d*\.?\d+)\s+"
+        r"PnL=(?P<pnl>[-+]?\d*\.?\d+)"
+    )
+
+    latest_by_symbol = {}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = pattern.search(line.strip())
+                if not match:
+                    continue
+                symbol = match.group("symbol")
+                row = {
+                    "side": match.group("side"),
+                    "buy": float(match.group("buy")),
+                    "sell": float(match.group("sell")),
+                    "pnl": float(match.group("pnl")),
+                }
+                latest_by_symbol[symbol] = row
+    except Exception as exc:
+        logger.warning(f"[REPORT] Failed to parse 320trade result summary: {exc}")
+        return None
+
+    if not latest_by_symbol:
+        return None
+
+    summary_lines = []
+    total_pnl = 0.0
+    for symbol in sorted(latest_by_symbol):
+        row = latest_by_symbol[symbol]
+        total_pnl += row["pnl"]
+        summary_lines.append(
+            f"{symbol}: BUY={row['buy']:.2f}, SELL={row['sell']:.2f}, PnL={row['pnl']:.2f}"
+        )
+    summary_lines.append(f"Net PnL: {total_pnl:.2f}")
+    return "\n".join(summary_lines)
+
+
 def email_daily_trade_summary(run_context, reason):
     """Send one daily workbook summary when a trading script stops."""
     email_cfg = CONFIG.get("email_notifications", {})
@@ -724,6 +781,12 @@ def email_daily_trade_summary(run_context, reason):
         f"Orders placed: {orders_placed}\n"
         f"Excel report: {report_path.name}"
     )
+
+    if str(run_context.get("config_key") or "").upper() == "320TRADE":
+        extra_summary = _extract_320trade_summary(run_context)
+        if extra_summary:
+            body = f"{body}\n\nExecuted 3:20 CE/PE outcome:\n{extra_summary}"
+
     send_email_notification(subject, body, attachment_path=report_path)
 
 

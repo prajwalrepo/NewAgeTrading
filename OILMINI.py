@@ -87,7 +87,7 @@ CONFIG = {
     "entry_open_gap_limit_points": 10.0,
     "use_momentum_filter": True,
     "flip_confirmation_window_candles": 1,
-    "pullback_reentry_enabled": True,
+    "pullback_reentry_enabled": False,
     "pullback_reentry_touch_tolerance_points": 5.0,
     # When enabled, only Supertrend direction flips control entries and exits.
     "only_supertrend": True,
@@ -1070,7 +1070,7 @@ def verify_order_execution(order_id, symbol, fallback_price=None):
         return None, None, None
 
 
-def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry_candle_low=None):
+def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry_candle_low=None, strike=None):
     try:
         side = candle_to_side.get(candle_symbol, "CE")
         allowed, cnt, max_allowed = check_trade_limit(side)
@@ -1137,6 +1137,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
                 "order_symbol": order_symbol,
                 "product_type": "MIS",
                 "side": side,
+                "strike": strike,
                 "highest_price": exec_price,
                 "trailing_sl_activated": False,
             }
@@ -1214,9 +1215,10 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             return None
 
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        strike = positions[candle_symbol].get("strike", "NA")
         print(
-            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={candle_symbol} "
-            f"Price={float(price):.2f} Reason={reason}",
+            f"[TRADE SIGNAL] Script=OILMINI Side=SELL Time={signal_time} Symbol={candle_symbol} "
+            f"Strike={strike} Price={float(price):.2f} Reason={reason} OrderPlaced=YES",
             flush=True,
         )
         live_qty = int(positions[candle_symbol].get("qty", 0))
@@ -1241,6 +1243,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             entry_price = float(positions[candle_symbol].get("entry_price", exec_price))
             pnl = (exec_price - entry_price) * qty_units
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [TRADE RESULT] Script=OILMINI Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
             positions[candle_symbol]["status"] = "CLOSED"
             positions[candle_symbol]["exit_price"] = exec_price
             positions[candle_symbol]["qty"] = 0
@@ -1393,8 +1396,9 @@ def live_signal_loop():
                         else "Supertrend flip entry"
                     )
                     print(
-                        f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={signal_symbol} "
-                        f"Price={float(close_price):.2f} Reason={signal_reason}",
+                        f"[TRADE SIGNAL] Script=OILMINI Side=BUY Time={signal_time} Symbol={signal_symbol} "
+                        f"Strike={snapshot.get('strike', 'NA')} Price={float(close_price):.2f} Reason={signal_reason} "
+                        f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
                         flush=True,
                     )
                     if CONFIG.get("debug_signal_tracking_enabled", False):
@@ -1413,7 +1417,7 @@ def live_signal_loop():
                         clear_pullback_reentry(signal_symbol)
                         print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {signal_symbol} OrderSymbol={order_symbol} Price={float(close_price):.2f} Side={side}")
                     if session_state == "entry":
-                        place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low))
+                        place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low), strike=snapshot.get("strike"))
 
             for symbol in list(positions.keys()):
                 if positions[symbol].get("status") != "OPEN":

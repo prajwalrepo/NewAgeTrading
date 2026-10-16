@@ -4,7 +4,7 @@
   "global_settings": {
     "timezone": "IST",
     "timezone_offset_minutes": 330,
-    "check_interval_seconds": 5,
+    "check_interval_seconds": 60,
     "dry_run": false,
     "enable_all_day_logging": true,
     "restart_crashed_scripts": false,
@@ -23,8 +23,8 @@
     "to_emails": [
       "gencinvestor@gmail.com"
     ],
-    "attach_log_on_stop": true,
-    "notes": "When enabled=true, the scheduler sends a start email and a stop/crash email with the run log and a BUY/SELL signal ledger containing time, symbol, price, and reason. Use an app password for Gmail."
+    "send_on_signals": true,
+    "notes": "When enabled=true, send one email per unique placed buy/sell trade signal with the daily Excel trade sheet attached. Use an app password for Gmail."
   },
 
   "scripts": {
@@ -46,7 +46,7 @@
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:12",
       "run_time_end": "15:30",
-      "api_delay_seconds": 0,
+      "api_delay_seconds": 10,
       "notes": "Runs only on Wednesday and Thursday"
     },
 
@@ -70,7 +70,7 @@
       "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
       "run_time_start": "16:00",
       "run_time_end": "23:30",
-      "api_delay_seconds": 0,
+      "api_delay_seconds": 10,
       "notes": "Runs from 16:00 and only between the 9th and 20th day of the month"
     },
 
@@ -82,7 +82,7 @@
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "16:30",
       "run_time_end": "23:30",
-      "api_delay_seconds": 0,
+      "api_delay_seconds": 10,
       "notes": "Runs from 16:30 on trading days"
     }
   },

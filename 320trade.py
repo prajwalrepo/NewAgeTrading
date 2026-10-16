@@ -5,7 +5,7 @@
 # 1) Check whether today matches a configured NIFTY or SENSEX expiry.
 # 2) Prefer the first instrument in expiry_priority that has a today expiry.
 # 3) At 15:20 IST, buy both ATM CE and ATM PE for that instrument.
-# 4) Exit any leg immediately if profit reaches +200% or loss reaches -75%.
+# 4) Exit any leg immediately if profit reaches the configured take-profit or loss reaches the configured stop-loss.
 # 5) Square off all remaining legs exactly at 15:30 IST.
 # =============================================================================
 
@@ -47,16 +47,9 @@ CONFIG = {
     "force_exit_time": "15:30",
     "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
 
-    # Profit / loss exits on the option premium itself.
-    # +200% means the option premium reaches 3x the entry price.
-    # -75% means the option premium falls to 25% of the entry price.
-    "take_profit_percent": 150.0,
-    "stop_loss_percent": 30.0,
-
     # Order sizing.
     # Fallback lot size used only if instrument lot size is not configured.
     "lot_size": 2,
-    "lots_per_leg": 1,
     # Keep True to place real broker orders.
     "enable_actual_trade": True,
     "check_margin_before_order": True,
@@ -80,6 +73,12 @@ CONFIG = {
         "strike_end": 28000,
         "expiry_fs": ["06Oct26", "13Oct26", "19Oct26", "27Oct26", "03Nov26"],
         "order_expiry": ["26O06", "26O13", "26O19", "26O27", "26N03"],
+        # Profit / loss exits on the option premium itself.
+        # +200% means the option premium reaches 3x the entry price.
+        # -75% means the option premium falls to 25% of the entry price.
+        "take_profit_percent": 150.0,
+        "stop_loss_percent": 40.0,
+        "max_lots_per_trade": 5,
     },
     "sensex": {
         "root": "SENSEX",
@@ -94,6 +93,12 @@ CONFIG = {
         "strike_end": 80000,
         "expiry_fs": ["08Oct26", "15Oct26", "22Oct26", "29Oct26", "05Nov26"],
         "order_expiry": ["26O08", "26O15", "26O22", "26O29", "26N05"],
+        # Profit / loss exits on the option premium itself.
+        # +200% means the option premium reaches 3x the entry price.
+        # -75% means the option premium falls to 25% of the entry price.
+        "take_profit_percent": 200.0,
+        "stop_loss_percent": 50,
+        "max_lots_per_trade": 10,
     },
 }
 
@@ -108,18 +113,18 @@ def log_event(message):
         pass
 
 
-def _make_paper_leg(order_symbol, price, reason="PAPER", qty=None):
-    lot_size = int(CONFIG.get("lot_size", 1) or 1)
-    lots_per_leg = int(CONFIG.get("lots_per_leg", 1) or 1)
+def _make_paper_leg(order_symbol, price, reason="PAPER", qty=None, strike=None, lot_size=None):
+    lot_size = int(lot_size or CONFIG.get("lot_size", 1) or 1)
     return {
         "order_symbol": order_symbol,
-        "qty": int(qty or lot_size * lots_per_leg),
+        "qty": int(qty or lot_size),
         "entry_price": float(price),
         "entry_time": get_ist_now().strftime("%Y-%m-%d %H:%M:%S"),
         "broker_order_placed": False,
         "paper_only": True,
         "exit_reason": None,
         "paper_reason": reason,
+        "strike": strike,
     }
 
 
@@ -136,6 +141,14 @@ def _resolve_lot_size(instrument_cfg):
     except Exception:
         lot_size = int(CONFIG.get("lot_size", 1) or 1)
     return max(lot_size, 1)
+
+
+def _resolve_lots_per_trade(instrument_cfg):
+    try:
+        lots_per_trade = int((instrument_cfg or {}).get("max_lots_per_trade", 1) or 1)
+    except Exception:
+        lots_per_trade = 1
+    return max(lots_per_trade, 1)
 
 
 def _estimated_pnl(entry_price, current_price, qty):
@@ -525,23 +538,25 @@ def resolve_product_constant(product_type):
     }.get(pt, growwapi.PRODUCT_MIS)
 
 
-def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, instrument_cfg=None):
+def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, instrument_cfg=None, strike=None):
     lot_size = _resolve_lot_size(instrument_cfg)
-    lots_per_leg = int(CONFIG.get("lots_per_leg", 1) or 1)
-    qty = lot_size * lots_per_leg
+    lots_per_trade = _resolve_lots_per_trade(instrument_cfg)
+    qty = lot_size * lots_per_trade
 
     signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
     log_event(
-        f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={order_symbol} "
-        f"Price={float(price):.2f} "
-        f"Reason=Expiry straddle entry; price source={entry_price_label} reference"
+        f"[TRADE SIGNAL] Script=320trade Side=BUY Time={signal_time} Symbol={order_symbol} "
+        f"Strike={strike if strike is not None else 'NA'} Price={float(price):.2f} "
+        f"Reason=Expiry straddle entry; price source={entry_price_label} reference "
+        f"Lots={lots_per_trade} LotSize={lot_size} Qty={qty} "
+        f"OrderPlaced={'YES' if bool(CONFIG.get('enable_actual_trade', True)) else 'NO'}"
     )
     log_event(f"[BUY ATTEMPT] {order_symbol} Qty={qty} EstEntry={float(price):.2f} Source={entry_price_label}")
 
     if not bool(CONFIG.get("enable_actual_trade", True)):
         log_event(f"[LIVE ORDER DISABLED] {order_symbol} running in paper tracking mode")
         if _paper_tracking_enabled():
-            return _make_paper_leg(order_symbol, price, reason="LIVE_ORDER_DISABLED", qty=qty)
+            return _make_paper_leg(order_symbol, price, reason="LIVE_ORDER_DISABLED", qty=qty, strike=strike, lot_size=lot_size)
         return None
 
     margin = get_available_fno_margin()
@@ -549,13 +564,13 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
         log_event(f"[SKIP] Margin unavailable for {order_symbol}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} using estimated entry price because broker margin is unavailable")
-            return _make_paper_leg(order_symbol, price, reason="MARGIN_UNAVAILABLE", qty=qty)
+            return _make_paper_leg(order_symbol, price, reason="MARGIN_UNAVAILABLE", qty=qty, strike=strike, lot_size=lot_size)
         return None
     if margin is not None and margin <= 0:
         log_event(f"[BUY BLOCKED] {order_symbol}: no usable margin budget ({margin:.2f})")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} using estimated entry price because usable margin is zero")
-            return _make_paper_leg(order_symbol, price, reason="NO_MARGIN", qty=qty)
+            return _make_paper_leg(order_symbol, price, reason="NO_MARGIN", qty=qty, strike=strike, lot_size=lot_size)
         return None
 
     try:
@@ -564,7 +579,7 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
         log_event(f"[ERROR] BUY {order_symbol}: {exc}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker BUY request failed")
-            return _make_paper_leg(order_symbol, price, reason="BUY_REQUEST_FAILED", qty=qty)
+            return _make_paper_leg(order_symbol, price, reason="BUY_REQUEST_FAILED", qty=qty, strike=strike, lot_size=lot_size)
         return None
 
     order_id = resp.get("groww_order_id") if isinstance(resp, dict) else None
@@ -573,7 +588,7 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
         log_event(f"[BUY FAIL] {order_symbol} status={status} order_id={order_id or 'NA'}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker buy did not fill")
-            return _make_paper_leg(order_symbol, price, reason=f"BROKER_{status}", qty=qty)
+            return _make_paper_leg(order_symbol, price, reason=f"BROKER_{status}", qty=qty, strike=strike, lot_size=lot_size)
         return None
     if status in {"NEW", "PENDING", "OPEN"}:
         time.sleep(2)
@@ -589,20 +604,21 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
             "entry_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "broker_order_placed": True,
             "paper_only": False,
+            "strike": strike,
         }
     log_event(f"[BUY FAIL] {order_symbol} final status={final_status}")
     if _paper_tracking_enabled():
         log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker buy execution was not confirmed")
-        return _make_paper_leg(order_symbol, price, reason=f"UNCONFIRMED_{final_status}", qty=qty)
+        return _make_paper_leg(order_symbol, price, reason=f"UNCONFIRMED_{final_status}", qty=qty, strike=strike, lot_size=lot_size)
     return None
 
 
-def place_sell_order(order_symbol, price, reason, qty):
+def place_sell_order(order_symbol, price, reason, qty, strike=None, entry_price=None):
     try:
         signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
         log_event(
-            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
-            f"Price={float(price):.2f} Reason={reason}"
+            f"[TRADE SIGNAL] Script=320trade Side=SELL Time={signal_time} Symbol={order_symbol} "
+            f"Strike={strike if strike is not None else 'NA'} Price={float(price):.2f} Reason={reason} OrderPlaced=YES"
         )
         log_event(f"[SELL ATTEMPT] {order_symbol} Qty={qty} Price={float(price):.2f} Reason={reason}")
         resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_SELL, growwapi.PRODUCT_MIS)
@@ -617,7 +633,10 @@ def place_sell_order(order_symbol, price, reason, qty):
         final_status, avg_price, _ = verify_order_execution(order_id, fallback_price=price)
         if final_status in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
             exec_price = avg_price if avg_price and avg_price > 0 else price
+            entry_value = float(entry_price if entry_price is not None else price)
+            pnl = (exec_price - entry_value) * qty
             log_event(f"[EXIT CONFIRMED] {order_symbol} x{qty} | Reason={reason} | Exit={exec_price:.2f} OrderID={order_id}")
+            log_event(f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={strike if strike is not None else 'NA'} BuyAt={entry_value:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
             return order_id
         log_event(f"[SELL FAIL] {order_symbol} final status={final_status}")
         return None
@@ -697,6 +716,9 @@ def squareoff_window_open(now_dt=None):
 
 def monitor_open_positions(state):
     live_positions = get_live_open_positions()
+    instrument_cfg = state["instrument_cfg"]
+    take_profit_percent = float(instrument_cfg.get("take_profit_percent", CONFIG.get("take_profit_percent", 150.0)) or 0)
+    stop_loss_percent = float(instrument_cfg.get("stop_loss_percent", CONFIG.get("stop_loss_percent", 30.0)) or 0)
     for leg_key in ("ce", "pe"):
         leg = state.get(leg_key)
         if not leg or leg.get("closed"):
@@ -707,8 +729,8 @@ def monitor_open_positions(state):
             continue
 
         entry_price = float(leg["entry_price"])
-        take_profit = entry_price * (1.0 + float(CONFIG.get("take_profit_percent", 200.0)) / 100.0)
-        stop_loss = entry_price * (1.0 - float(CONFIG.get("stop_loss_percent", 75.0)) / 100.0)
+        take_profit = entry_price * (1.0 + take_profit_percent / 100.0)
+        stop_loss = entry_price * (1.0 - stop_loss_percent / 100.0)
         est_pnl = _estimated_pnl(entry_price, current_price, leg["qty"])
         mode_text = "BROKER" if leg.get("broker_order_placed", True) else "PAPER"
         log_event(
@@ -721,14 +743,18 @@ def monitor_open_positions(state):
             if leg.get("paper_only"):
                 signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
                 log_event(
-                    f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
-                    f"Price={float(current_price):.2f} "
-                    f"Reason=Take-profit target (paper exit)"
+                    f"[TRADE SIGNAL] Script=320trade Side=SELL Time={signal_time} Symbol={order_symbol} "
+                    f"Strike={leg.get('strike', 'NA')} Price={float(current_price):.2f} "
+                    f"Reason=Take-profit target (paper exit) OrderPlaced=NO"
+                )
+                log_event(
+                    f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={leg.get('strike', 'NA')} "
+                    f"BuyAt={float(leg['entry_price']):.2f} SellAt={float(current_price):.2f} PnL={est_pnl:.0f}"
                 )
                 leg["closed"] = True
                 leg["exit_reason"] = "TP"
                 log_event(f"[PAPER EXIT] {order_symbol} closed on TP | EstPnL={est_pnl:.0f}")
-            elif place_sell_order(order_symbol, current_price, f"TP +{CONFIG.get('take_profit_percent', 200.0)}%", leg["qty"]):
+            elif place_sell_order(order_symbol, current_price, f"TP +{take_profit_percent:g}%", leg["qty"], strike=leg.get("strike"), entry_price=leg["entry_price"]):
                 leg["closed"] = True
                 leg["exit_reason"] = "TP"
         elif current_price <= stop_loss:
@@ -736,13 +762,17 @@ def monitor_open_positions(state):
             if leg.get("paper_only"):
                 signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
                 log_event(
-                    f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
-                    f"Price={float(current_price):.2f} Reason=Stop-loss target (paper exit)"
+                    f"[TRADE SIGNAL] Script=320trade Side=SELL Time={signal_time} Symbol={order_symbol} "
+                    f"Strike={leg.get('strike', 'NA')} Price={float(current_price):.2f} Reason=Stop-loss target (paper exit) OrderPlaced=NO"
+                )
+                log_event(
+                    f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={leg.get('strike', 'NA')} "
+                    f"BuyAt={float(leg['entry_price']):.2f} SellAt={float(current_price):.2f} PnL={est_pnl:.0f}"
                 )
                 leg["closed"] = True
                 leg["exit_reason"] = "SL"
                 log_event(f"[PAPER EXIT] {order_symbol} closed on SL | EstPnL={est_pnl:.0f}")
-            elif place_sell_order(order_symbol, current_price, f"SL -{CONFIG.get('stop_loss_percent', 75.0)}%", leg["qty"]):
+            elif place_sell_order(order_symbol, current_price, f"SL -{stop_loss_percent:g}%", leg["qty"], strike=leg.get("strike"), entry_price=leg["entry_price"]):
                 leg["closed"] = True
                 leg["exit_reason"] = "SL"
 
@@ -761,13 +791,17 @@ def close_remaining_positions(state, reason):
         if leg.get("paper_only"):
             signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
             log_event(
-                f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={order_symbol} "
-                f"Price={float(current_price):.2f} Reason={reason} (paper/reference exit)"
+                f"[TRADE SIGNAL] Script=320trade Side=SELL Time={signal_time} Symbol={order_symbol} "
+                f"Strike={leg.get('strike', 'NA')} Price={float(current_price):.2f} Reason={reason} (paper/reference exit) OrderPlaced=NO"
+            )
+            log_event(
+                f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={leg.get('strike', 'NA')} "
+                f"BuyAt={float(leg['entry_price']):.2f} SellAt={float(current_price):.2f} PnL={est_pnl:.0f}"
             )
             leg["closed"] = True
             leg["exit_reason"] = reason
             log_event(f"[PAPER FINAL EXIT] {order_symbol} closed without broker order | Reason={reason}")
-        elif place_sell_order(order_symbol, current_price, reason, leg["qty"]):
+        elif place_sell_order(order_symbol, current_price, reason, leg["qty"], strike=leg.get("strike"), entry_price=leg["entry_price"]):
             leg["closed"] = True
             leg["exit_reason"] = reason
 
@@ -797,6 +831,7 @@ def try_open_320trade(state):
         segment=state["instrument_cfg"]["segment"],
         entry_price_label="INDEX",
         instrument_cfg=state["instrument_cfg"],
+        strike=contracts["ce_strike"],
     )
     if ce_leg is None:
         log_event("[ENTRY FAIL] CE leg failed")
@@ -809,14 +844,17 @@ def try_open_320trade(state):
         segment=state["instrument_cfg"]["segment"],
         entry_price_label="INDEX",
         instrument_cfg=state["instrument_cfg"],
+        strike=contracts["pe_strike"],
     )
     if pe_leg is None:
         log_event("[ENTRY FAIL] PE leg failed, flattening CE leg")
         if not ce_leg.get("paper_only"):
-            place_sell_order(ce_leg["order_symbol"], ce_leg["entry_price"], "Entry rollback", ce_leg["qty"])
+            place_sell_order(ce_leg["order_symbol"], ce_leg["entry_price"], "Entry rollback", ce_leg["qty"], strike=contracts["ce_strike"], entry_price=ce_leg["entry_price"])
         return
 
     state["entered"] = True
+    ce_leg["strike"] = contracts["ce_strike"]
+    pe_leg["strike"] = contracts["pe_strike"]
     state["ce"] = {**ce_leg, "closed": False, "candle_symbol": contracts["ce"]["candle_symbol"]}
     state["pe"] = {**pe_leg, "closed": False, "candle_symbol": contracts["pe"]["candle_symbol"]}
     state["contracts"] = contracts

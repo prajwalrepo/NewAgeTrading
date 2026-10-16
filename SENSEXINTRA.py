@@ -80,13 +80,13 @@ CONFIG = {
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 10,
-    "max_lots_per_trade": 10,
+    "max_lots_per_trade": 20,
     "allocation_per_trade": 30000,
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
-    "max_profit_per_day": 1000,
-    "max_loss_per_day": 2000,
+    "max_profit_per_day": 15000,
+    "max_loss_per_day": 5000,
 
     # Risk / exits
     "special_exit_enabled": True,
@@ -997,12 +997,25 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
         "last_exit_price": float(exit_price),
         "reason": reason,
         "kind": "missed_entry" if missed_entry else "exit",
+        "consumed": False,
     }
     print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
 
 
 def clear_pullback_reentry(candle_symbol):
     pullback_reentry_tracker.pop(candle_symbol, None)
+
+
+def mark_pullback_reentry_consumed(candle_symbol):
+    reentry_state = pullback_reentry_tracker.get(candle_symbol)
+    if reentry_state is not None:
+        reentry_state["consumed"] = True
+
+
+def mark_pullback_reentry_consumed(candle_symbol):
+    reentry_state = pullback_reentry_tracker.get(candle_symbol)
+    if reentry_state is not None:
+        reentry_state["consumed"] = True
 
 
 def close_open_side(side, reason):
@@ -1172,7 +1185,7 @@ def check_trailing_stop_exit():
             )
 
 
-def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None):
+def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None):
     try:
         can_trade, cnt, max_allowed = check_trade_limit(candle_symbol)
         if not can_trade:
@@ -1254,6 +1267,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 "order_symbol": order_symbol,
                 "product_type": "MIS",
                 "side": candle_to_side.get(candle_symbol),
+                "strike": strike,
                 "highest_price": exec_price,
                 "stop_loss_price": candle_low - loss_stop_pips,
                 "trailing_sl_activated": False,
@@ -1285,9 +1299,10 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             return None
 
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        strike = positions[candle_symbol].get("strike", "NA")
         print(
-            f"[TRADE SIGNAL] Side=SELL Time={signal_time} Symbol={candle_symbol} "
-            f"Price={float(price):.2f} Reason={reason}",
+            f"[TRADE SIGNAL] Script=SENSEXINTRA Side=SELL Time={signal_time} Symbol={candle_symbol} "
+            f"Strike={strike} Price={float(price):.2f} Reason={reason} OrderPlaced=YES",
             flush=True,
         )
         live_positions = get_live_open_positions()
@@ -1326,6 +1341,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             pnl = (exec_price - entry_price) * qty_units
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
+            print(f"[{ts}] [TRADE RESULT] Script=SENSEXINTRA Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
             update_daily_pnl(pnl)
             positions[candle_symbol]["status"] = "CLOSED"
             positions[candle_symbol]["exit_price"] = exec_price
@@ -1554,6 +1570,9 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
             idx_time,
         )
         reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
+
+    if reentry_candidate is not None and reentry_candidate.get("consumed"):
+        reentry_candidate = None
 
     reentry_ok = False
     if reentry_candidate is not None:
@@ -1839,8 +1858,9 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={candle_symbol} "
-                                f"Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason}",
+                                f"[TRADE SIGNAL] Script=SENSEXINTRA Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"Strike={ce_snapshot.get('strike', 'NA')} Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
+                                f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(
@@ -1853,12 +1873,15 @@ def live_signal_loop():
                                 strike=ce_snapshot.get("strike"),
                             )
                             if session_state == "entry" and int(side_cooldown_tracker.get("CE", 0)) == 0:
+                                if ce_snapshot.get("signal") == "BUY_REENTRY":
+                                    mark_pullback_reentry_consumed(candle_symbol)
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,
                                     ce_snapshot.get("last_price"),
                                     ce_snapshot.get("entry_open"),
                                     entry_candle_low=ce_snapshot.get("entry_low"),
+                                    strike=ce_snapshot.get("strike"),
                                 )
                     if pe_ok:
                         candle_symbol = pe_snapshot.get("candle_symbol")
@@ -1875,8 +1898,9 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SIGNAL] Side=BUY Time={signal_time} Symbol={candle_symbol} "
-                                f"Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason}",
+                                f"[TRADE SIGNAL] Script=SENSEXINTRA Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"Strike={pe_snapshot.get('strike', 'NA')} Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
+                                f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(
@@ -1889,12 +1913,15 @@ def live_signal_loop():
                                 strike=pe_snapshot.get("strike"),
                             )
                             if session_state == "entry" and int(side_cooldown_tracker.get("PE", 0)) == 0:
+                                if pe_snapshot.get("signal") == "BUY_REENTRY":
+                                    mark_pullback_reentry_consumed(candle_symbol)
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,
                                     pe_snapshot.get("last_price"),
                                     pe_snapshot.get("entry_open"),
                                     entry_candle_low=pe_snapshot.get("entry_low"),
+                                    strike=pe_snapshot.get("strike"),
                                 )
 
             wait_until_next_interval()

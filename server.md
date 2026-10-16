@@ -473,5 +473,3 @@ If the scheduler repeatedly restarts, inspect its logs first:
 ```bash
 sudo journalctl -u newage-scheduler -n 200 --no-pager
 ```
-
-

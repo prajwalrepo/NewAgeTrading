@@ -39,7 +39,7 @@ CONFIG = {
     # Core setup
     "index_symbol": "NIFTY",
     "exchange": "NSE",
-    "candle_interval": "1M",
+    "candle_interval": "2M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -67,7 +67,6 @@ CONFIG = {
     "flip_confirmation_window_candles": 2,
     "pullback_reentry_enabled": True,
     "pullback_reentry_touch_tolerance_points": 5.0,
-    "missed_entry_reentry_enabled": True,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
@@ -84,7 +83,7 @@ CONFIG = {
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
-    "max_profit_per_day": 15000,
+    "max_profit_per_day": 10000,
     "max_loss_per_day": 3000,
 
     # Risk / exits
@@ -939,6 +938,13 @@ def has_open_on_side(side):
     return len(get_open_symbols_by_side(side)) > 0
 
 
+def has_open_position():
+    return any(
+        pos.get("status") == "OPEN" and int(pos.get("qty", 0)) > 0
+        for pos in positions.values()
+    )
+
+
 def has_live_open_on_side(side, live_positions=None):
     if live_positions is None:
         live_positions = get_live_open_positions()
@@ -982,8 +988,7 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
     if not CONFIG.get("pullback_reentry_enabled", False):
         return
     reason_text = str(reason or "").upper()
-    missed_entry = reason_text.startswith("MISSED_ENTRY")
-    if not (reason_text.startswith("MX") or reason_text.startswith("TSL") or missed_entry):
+    if not (reason_text.startswith("MX") or reason_text.startswith("TSL")):
         pullback_reentry_tracker.pop(candle_symbol, None)
         return
 
@@ -995,7 +1000,7 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
         "armed_at": idx_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_exit_price": float(exit_price),
         "reason": reason,
-        "kind": "missed_entry" if missed_entry else "exit",
+        "kind": "exit",
         "consumed": False,
     }
     print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
@@ -1181,6 +1186,10 @@ def check_trailing_stop_exit():
 
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None):
     try:
+        if has_open_position():
+            print(f"[BUY BLOCKED] {candle_symbol}: another position is already open")
+            return None
+
         can_trade, cnt, max_allowed = check_trade_limit(candle_symbol)
         if not can_trade:
             print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
@@ -1457,7 +1466,6 @@ def check_debug_sell_signals(idx_time):
                         f"Reason=MX +{max_profit_points:g}pts Entry={entry_price:.2f} Exit={float(current_price):.2f} "
                         f"PnLPoints={pnl_points:.2f}"
                     )
-                    arm_pullback_reentry(candle_symbol, f"MX full profit: +{max_profit_points:g}", float(current_price), idx_time)
                     if side in side_cooldown_tracker:
                         side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
                     debug_last_max_check_at.pop(candle_symbol, None)
@@ -1487,7 +1495,6 @@ def check_debug_sell_signals(idx_time):
                 f"Reason=TSL Entry={entry_price:.2f} Exit={float(current_price):.2f} "
                 f"TSL@{tsl_price:.2f} PnLPoints={pnl_points:.2f}"
             )
-            arm_pullback_reentry(candle_symbol, "TSL: trailing stop hit", float(current_price), idx_time)
             if side in side_cooldown_tracker:
                 side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0)
             debug_last_max_check_at.pop(candle_symbol, None)
@@ -1550,23 +1557,6 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
     reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
     if reentry_candidate is not None and reentry_candidate.get("consumed"):
         reentry_candidate = None
-    if (
-        reentry_candidate is None
-        and CONFIG.get("pullback_reentry_enabled", False)
-        and CONFIG.get("missed_entry_reentry_enabled", False)
-        and trend == "up"
-        and positions.get(candle_symbol, {}).get("status") != "OPEN"
-        and candle_symbol not in debug_signal_positions
-        and (not fresh_flip or not (momentum_ok and open_gap_ok))
-    ):
-        arm_pullback_reentry(
-            candle_symbol,
-            "MISSED_ENTRY: late start or rejected initial entry",
-            close_price,
-            idx_time,
-        )
-        reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
-
     reentry_ok = False
     if reentry_candidate is not None:
         if trend != "up":
@@ -1576,23 +1566,14 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
             touched_st = st_value is not None and entry_low <= (st_value + touch_tolerance)
             reclaimed_uptrend = st_value is not None and close_price > st_value
             continuation_ok = close_price > prev_high and close_price >= entry_open
-            if reentry_candidate.get("kind") == "missed_entry":
-                reentry_ok = bool(
-                    signal_candle_body_ok
-                    and touched_st
-                    and reclaimed_uptrend
-                    and close_price >= entry_open
-                    and momentum_ok
-                )
-            else:
-                reentry_ok = bool(
-                    signal_candle_body_ok
-                    and touched_st
-                    and reclaimed_uptrend
-                    and continuation_ok
-                    and momentum_ok
-                    and open_gap_ok
-                )
+            reentry_ok = bool(
+                signal_candle_body_ok
+                and touched_st
+                and reclaimed_uptrend
+                and continuation_ok
+                and momentum_ok
+                and open_gap_ok
+            )
 
     allow_buy = bool(
         signal_candle_body_ok
@@ -1847,7 +1828,7 @@ def live_signal_loop():
                     ce_ok = bool(ce_snapshot and ce_snapshot.get("ok") and ce_snapshot.get("signal") in {"BUY", "BUY_REENTRY"} and ce_snapshot.get("last_price") is not None and ce_snapshot.get("entry_open") is not None)
                     pe_ok = bool(pe_snapshot and pe_snapshot.get("ok") and pe_snapshot.get("signal") in {"BUY", "BUY_REENTRY"} and pe_snapshot.get("last_price") is not None and pe_snapshot.get("entry_open") is not None)
 
-                    if ce_ok:
+                    if ce_ok and not has_open_position():
                         candle_symbol = ce_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
@@ -1887,7 +1868,7 @@ def live_signal_loop():
                                     entry_candle_low=ce_snapshot.get("entry_low"),
                                     strike=ce_snapshot.get("strike"),
                                 )
-                    if pe_ok:
+                    if pe_ok and not has_open_position():
                         candle_symbol = pe_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)

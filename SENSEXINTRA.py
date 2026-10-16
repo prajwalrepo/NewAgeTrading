@@ -84,7 +84,7 @@ CONFIG = {
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
-    "max_profit_per_day": 1000,
+    "max_profit_per_day": 10000,
     "max_loss_per_day": 2000,
 
     # Risk / exits

@@ -102,7 +102,7 @@ SCRIPTS_SCHEDULE = {
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": False,
+        "enabled": True,
         "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],

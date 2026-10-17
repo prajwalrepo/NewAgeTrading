@@ -49,11 +49,11 @@ CONFIG = {
     # Supported entries:
     # 1) String: "08Sep26" (uses matching order_expiry_* by index if provided as list)
     # 2) Dict: {"candle": "25Aug26", "order": "26AUG"} for monthly style order token
-    "expiry_fs": ["08Oct26", "15Oct26","22Oct26", "29Oct26", "05Nov26","12Nov26", "19Nov26", "26Nov26"],
+    "expiry_fs": ["22Oct26", "29Oct26", "05Nov26","12Nov26", "19Nov26", "26Nov26"],
     # Order expiry token(s) paired with expiry_fs by index for list usage.
     # Weekly-style examples: "26908" (YYMDD)
     # Monthly-style examples: "26AUG" (YYMMM)
-    "order_expiry": ["26O08", "26O15", "26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
+    "order_expiry": ["26O22", "26OCT", "26N05","26N12", "26N19", "26NOV"],
     "strike_step": 100,
     # Keep the configured universe wide enough for normal SENSEX movement.
     # ATM selection then chooses the nearest 100-point strike to the index.

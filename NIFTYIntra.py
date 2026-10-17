@@ -49,11 +49,11 @@ CONFIG = {
     # Supported entries:
     # 1) String: "08Sep26" (uses matching order_expiry_* by index if provided as list)
     # 2) Dict: {"candle": "25Aug26", "order": "26AUG"} for monthly style order token
-    "expiry_fs": ["06Oct26", "13Oct26", "19Oct26", "27Oct26", "03Nov26"],
+    "expiry_fs": ["19Oct26", "27Oct26", "03Nov26","09Nov26", "17Nov26", "23Nov26"],
     # Order expiry token(s) paired with expiry_fs by index for list usage.
     # Weekly-style examples: "26908" (YYMDD)
     # Monthly-style examples: "26AUG" (YYMMM)
-    "order_expiry": ["26O06", "26O13", "26O19", "26OCT", "26N03"],
+    "order_expiry": ["26O19", "26OCT", "26N03","26N09", "26N17", "26NOV"],
     "strike_step": 50,
     "strike_start": 20000,
     "strike_end": 25000,

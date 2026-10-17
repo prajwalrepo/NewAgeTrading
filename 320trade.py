@@ -71,8 +71,8 @@ CONFIG = {
         "strike_step": 50,
         "strike_start": 20000,
         "strike_end": 28000,
-        "expiry_fs": ["06Oct26", "13Oct26", "19Oct26", "27Oct26", "03Nov26"],
-        "order_expiry": ["26O06", "26O13", "26O19", "26O27", "26N03"],
+        "expiry_fs": ["19Oct26", "27Oct26", "03Nov26","09Nov26", "17Nov26", "23Nov26"],
+        "order_expiry": ["26O19", "26OCT", "26N03","26N09", "26N17", "26NOV"],
         # Profit / loss exits on the option premium itself.
         # +200% means the option premium reaches 3x the entry price.
         # -75% means the option premium falls to 25% of the entry price.
@@ -91,8 +91,8 @@ CONFIG = {
         "strike_step": 100,
         "strike_start": 60000,
         "strike_end": 80000,
-        "expiry_fs": ["08Oct26", "15Oct26", "22Oct26", "29Oct26", "05Nov26"],
-        "order_expiry": ["26O08", "26O15", "26O22", "26O29", "26N05"],
+        "expiry_fs": ["22Oct26", "29Oct26", "05Nov26","12Nov26", "19Nov26", "26Nov26"],
+        "order_expiry": ["26O22", "26OCT", "26N05","26N12", "26N19", "26NOV"],
         # Profit / loss exits on the option premium itself.
         # +200% means the option premium reaches 3x the entry price.
         # -75% means the option premium falls to 25% of the entry price.

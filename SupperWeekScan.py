@@ -77,6 +77,7 @@ WATCHLIST = [
       
 ]
 
+MAX_WEEKLY_HISTORY_DAYS = 180
 MULTIPLIER = 3.0
 ATR_PERIOD = 7
 SMA_PERIOD = 20
@@ -157,14 +158,14 @@ except Exception as exc:  # pragma: no cover - credentials / runtime bootstrap p
 
 
 def safe_get_weekly_data(symbol: str):
-    """Fetch weekly OHLC data for a stock using the Groww API."""
+    """Fetch just enough recent weekly OHLC data for the Supertrend signal."""
     try:
         exchange = getattr(growwapi, "EXCHANGE_NSE")
         segment = getattr(growwapi, "SEGMENT_CASH")
         groww_symbol = symbol if symbol.startswith("NSE-") else f"NSE-{symbol}"
 
         end_time = datetime.now()
-        start_time = end_time - timedelta(days=720)
+        start_time = end_time - timedelta(days=MAX_WEEKLY_HISTORY_DAYS)
 
         raw = growwapi.get_historical_candles(
             groww_symbol=groww_symbol,
@@ -183,14 +184,17 @@ def safe_get_weekly_data(symbol: str):
         if df.empty:
             print(f"[WARN] Weekly data frame empty for {symbol}")
             return None
-        return df
+
+        # Groww enforces a maximum lookback for 1-week candles. Keep only the recent bars
+        # needed by the weekly Supertrend calculation to avoid extra stale history.
+        return df.tail(max(30, ATR_PERIOD + SMA_PERIOD + 5))
     except Exception as exc:  # pragma: no cover - network / API failure path
         print(f"[ERROR] Failed to fetch weekly data for {symbol}: {exc}")
         return None
 
 
 def calculate_supertrend_proxy(df: pd.DataFrame):
-    """Simplified weekly Supertrend signal using ATR bands and SMA filter."""
+    """Simplified weekly Supertrend signal using only the recent required candles."""
     if df is None or df.empty:
         return None, None
 
@@ -202,6 +206,11 @@ def calculate_supertrend_proxy(df: pd.DataFrame):
     if work.empty:
         return None, None
 
+    effective_atr = min(ATR_PERIOD, max(3, len(work) - 1))
+    effective_sma = min(SMA_PERIOD, max(5, len(work) - 1))
+    if len(work) < max(5, effective_atr):
+        return None, work.iloc[-1] if not work.empty else None
+
     work["TR"] = np.maximum(
         work["High"] - work["Low"],
         np.maximum(
@@ -209,9 +218,9 @@ def calculate_supertrend_proxy(df: pd.DataFrame):
             (work["Low"] - work["Close"].shift(1)).abs(),
         ),
     )
-    work["ATR"] = work["TR"].rolling(window=ATR_PERIOD, min_periods=ATR_PERIOD).mean()
+    work["ATR"] = work["TR"].rolling(window=effective_atr, min_periods=effective_atr).mean()
     work["Band"] = ((work["High"] + work["Low"]) / 2.0) + MULTIPLIER * work["ATR"]
-    work["SMA20"] = work["Close"].rolling(window=SMA_PERIOD, min_periods=SMA_PERIOD).mean()
+    work["SMA"] = work["Close"].rolling(window=effective_sma, min_periods=effective_sma).mean()
 
     if len(work) < 2:
         return None, work.iloc[-1]
@@ -220,10 +229,10 @@ def calculate_supertrend_proxy(df: pd.DataFrame):
     prev = work.iloc[-2]
     signal = None
 
-    if pd.notna(last["Close"]) and pd.notna(last["Band"]) and pd.notna(last["SMA20"]):
-        if last["Close"] > prev["Band"] and last["Close"] > last["SMA20"]:
+    if pd.notna(last["Close"]) and pd.notna(last["Band"]) and pd.notna(last["SMA"]):
+        if last["Close"] > prev["Band"] and last["Close"] > last["SMA"]:
             signal = "BUY"
-        elif last["Close"] < prev["Band"] and last["Close"] < last["SMA20"]:
+        elif last["Close"] < prev["Band"] and last["Close"] < last["SMA"]:
             signal = "SELL"
 
     return signal, last

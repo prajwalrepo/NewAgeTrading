@@ -79,14 +79,14 @@ CONFIG = {
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 10,
-    "max_lots_per_trade": 10,
+    "max_lots_per_trade": 20,
     "allocation_per_trade": 30000,
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
     "max_reentries_per_day": 2,
-    "max_profit_per_day": 1000,
-    "max_loss_per_day": 2000,
+    "max_profit_per_day": 12000,
+    "max_loss_per_day": 2500,
 
     # Risk / exits
     "special_exit_enabled": True,

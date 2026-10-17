@@ -72,7 +72,7 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",
-        "api_delay_seconds": 10,  # Delay before starting this script (to space out API calls)
+        "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
     
@@ -84,7 +84,7 @@ SCRIPTS_SCHEDULE = {
         "run_days_of_month": None,  # Every day of month
         "run_time_start": "09:12",
         "run_time_end": "15:30",
-        "api_delay_seconds": 10,  # Start 30 sec after NIFTY to avoid rate limit
+        "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
@@ -109,7 +109,7 @@ SCRIPTS_SCHEDULE = {
         "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
         "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 10,  # Start 60 sec after NIFTY
+        "api_delay_seconds": 00,  # Start 60 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
     
@@ -121,9 +121,9 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": None,  # Every day of the month
-        "run_time_start": "16:30",
+        "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
-        "api_delay_seconds": 10,  # Start 90 sec after NIFTY
+        "api_delay_seconds": 00,  # Start 90 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
@@ -133,7 +133,7 @@ SCRIPTS_SCHEDULE = {
         "enabled": True,
         "run_days": [DayOfWeek.FRIDAY],
         "run_time_start": "23:00",
-        "run_time_end": "23:05",
+        "run_time_end": "23:30",
         "api_delay_seconds": 0,
         "send_signal_emails": True,
     },

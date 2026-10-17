@@ -11,10 +11,32 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from growwapi import GrowwAPI
+
+
+def load_groww_credentials():
+    """Load Groww creds from environment or a local .env file."""
+    env_file = Path(__file__).resolve().with_name(".env")
+    if env_file.exists():
+        try:
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                os.environ.setdefault(key, value)
+        except Exception:
+            pass
+
+    api_key = os.getenv("GROWW_API_KEY", "").strip()
+    api_secret = os.getenv("GROWW_API_SECRET", "").strip()
+    return api_key, api_secret
 
 
 WATCHLIST = [
@@ -117,10 +139,15 @@ def _build_dataframe(candles):
     return df.dropna(subset=["date", "open", "high", "low", "close"]).sort_values("date").reset_index(drop=True)
 
 
+api_key, api_secret = load_groww_credentials()
+if not api_key or not api_secret:
+    print("[ERROR] Missing Groww credentials. Set GROWW_API_KEY and GROWW_API_SECRET in the environment or create a .env file in the project root.")
+    raise SystemExit(1)
+
 try:
     raw_access_token = GrowwAPI.get_access_token(
-        api_key=os.getenv("GROWW_API_KEY", ""),
-        secret=os.getenv("GROWW_API_SECRET", ""),
+        api_key=api_key,
+        secret=api_secret,
     )
     access_token = _normalize_access_token(raw_access_token)
     growwapi = GrowwAPI(access_token)

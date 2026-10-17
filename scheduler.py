@@ -102,7 +102,7 @@ SCRIPTS_SCHEDULE = {
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": True,
+        "enabled": False,
         "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
@@ -125,6 +125,17 @@ SCRIPTS_SCHEDULE = {
         "run_time_end": "23:30",  # MCX trades longer
         "api_delay_seconds": 10,  # Start 90 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
+    },
+
+    "SupperWeekScan": {
+        "script_name": "SupperWeekScan.py",
+        "description": "Weekly stock scanner using supertrend logic",
+        "enabled": True,
+        "run_days": [DayOfWeek.FRIDAY],
+        "run_time_start": "23:00",
+        "run_time_end": "23:05",
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
     },
 }
 

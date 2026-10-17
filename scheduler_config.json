@@ -90,6 +90,18 @@
       "api_delay_seconds": 10,
       "send_signal_emails": true,
       "notes": "Immediate mail for every generated signal"
+    },
+
+    "SupperWeekScan": {
+      "script_name": "SupperWeekScan.py",
+      "description": "Weekly stock scanner using Groww weekly candles",
+      "enabled": true,
+      "run_days": ["FRIDAY"],
+      "run_time_start": "23:00",
+      "run_time_end": "23:05",
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "notes": "Weekly scanner uses Groww weekly candles and sends immediate signal emails on Friday 11:00 PM IST."
     }
   },
 

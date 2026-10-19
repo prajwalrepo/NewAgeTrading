@@ -68,7 +68,7 @@ SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
         "description": "NIFTY Intraday FNO Strategy",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",

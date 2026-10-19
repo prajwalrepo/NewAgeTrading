@@ -32,7 +32,7 @@
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy (9:13 AM to 3:30 PM)",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
       "run_time_start": "09:13",
       "run_time_end": "15:30",

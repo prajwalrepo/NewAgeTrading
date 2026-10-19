@@ -78,7 +78,7 @@ CONFIG = {
         # -75% means the option premium falls to 25% of the entry price.
         "take_profit_percent": 150.0,
         "stop_loss_percent": 40.0,
-        "max_lots_per_trade": 5,
+        "max_lots_per_trade": 2,
     },
     "sensex": {
         "root": "SENSEX",
@@ -98,7 +98,7 @@ CONFIG = {
         # -75% means the option premium falls to 25% of the entry price.
         "take_profit_percent": 200.0,
         "stop_loss_percent": 50,
-        "max_lots_per_trade": 10,
+        "max_lots_per_trade": 5,
     },
 }
 

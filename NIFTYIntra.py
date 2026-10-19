@@ -1331,6 +1331,15 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             clear_pullback_reentry(candle_symbol)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
+            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+            lot_size = int(CONFIG.get("lot_size", 1) or 1)
+            print(
+                f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} "
+                f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
+                f"Price={exec_price:.2f} Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
+                f"Lots={int(qty) // lot_size} LotSize={lot_size} Qty={int(qty)} OrderPlaced=YES",
+                flush=True,
+            )
             print_open_position_risk_levels(ts)
             return order_id
         print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
@@ -1351,13 +1360,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         if candle_symbol not in positions or positions[candle_symbol].get("status") != "OPEN":
             return None
 
-        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
         strike = positions[candle_symbol].get("strike", "NA")
-        print(
-            f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} Symbol={candle_symbol} "
-            f"Strike={strike} Price={float(price):.2f} Reason={reason} OrderPlaced=YES",
-            flush=True,
-        )
         live_positions = get_live_open_positions()
         if candle_symbol not in live_positions:
             positions[candle_symbol]["status"] = "CLOSED"
@@ -1393,6 +1396,15 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             entry_price = float(pos.get("entry_price", exec_price))
             pnl = (exec_price - entry_price) * qty_units
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+            lot_size = int(CONFIG.get("lot_size", 1) or 1)
+            print(
+                f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} "
+                f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
+                f"Reason={reason} Lots={qty_units // lot_size} LotSize={lot_size} "
+                f"Qty={qty_units} OrderPlaced=YES",
+                flush=True,
+            )
             print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
             print(f"[{ts}] [TRADE RESULT] Script=NIFTYIntra Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
             update_daily_pnl(pnl)
@@ -1898,7 +1910,7 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={ce_snapshot.get('strike', 'NA')} Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
                                 f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
                                 flush=True,
@@ -1937,7 +1949,7 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
+                                f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={pe_snapshot.get('strike', 'NA')} Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
                                 f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
                                 flush=True,

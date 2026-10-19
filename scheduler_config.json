@@ -25,20 +25,20 @@
     ],
     "send_on_signals": true,
     "send_daily_summary_on_stop": true,
-    "notes": "Signal emails are enabled for NIFTY/SENSEX/OIL/NATGAS. The 320trade script is set to send only the final 3:30 summary with CE/PE executed prices and PnL, plus the Excel workbook attachment. Use an app password for Gmail."
+    "notes": "Signal emails contain trade details without workbook attachments. Daily summary emails include the Excel workbook. 320trade sends its CE/PE result table after both legs close."
   },
 
   "scripts": {
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy (9:13 AM to 3:30 PM)",
-      "enabled": false,
+      "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
       "run_time_start": "09:13",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal"
+      "notes": "Immediate mail for every generated signal; no Excel attachment on signal emails"
     },
 
     "SENSEXINTRA": {
@@ -50,25 +50,25 @@
       "run_time_end": "15:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal"
+      "notes": "Immediate mail for every generated signal; no Excel attachment on signal emails"
     },
 
     "320trade": {
       "script_name": "320trade.py",
-      "description": "Expiry-day 3:20 ATM CE+PE Straddle Strategy",
+      "description": "Expiry-day 3:20 ITM CE+PE Strategy",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "15:18",
+      "run_time_start": "15:15",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": false,
-      "notes": "No immediate signal emails. Final summary at 3:30 includes executed CE/PE buy/sell prices and total PnL, plus the Excel workbook."
+      "notes": "Selects 100-point ITM strikes at 15:15 and starts CE/PE market buys at 15:20. Sends a CE/PE result table and Excel workbook after both legs close."
     },
 
     "OILMINI": {
       "script_name": "OILMINI.py",
       "description": "Crude Oil Mini Options Strategy (MCX)",
-      "enabled": false,
+      "enabled": true,
       "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],

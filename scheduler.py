@@ -21,6 +21,7 @@ import smtplib
 import mimetypes
 import re
 import hashlib
+import html
 from collections import deque
 from datetime import datetime, timedelta, time as dt_time, timezone
 from email.message import EmailMessage
@@ -68,7 +69,7 @@ SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
         "description": "NIFTY Intraday FNO Strategy",
-        "enabled": False,
+        "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",
@@ -90,10 +91,10 @@ SCRIPTS_SCHEDULE = {
 
     "320trade": {
         "script_name": "320trade.py",
-        "description": "Expiry-day 3:20 ATM CE+PE Straddle Strategy",
+        "description": "Expiry-day 3:20 ITM CE+PE Strategy",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "15:18",
+        "run_time_start": "15:15",
         "run_time_end": "15:30",
         "api_delay_seconds": 0,
         "send_signal_emails": False,  # One final summary after close, not every signal
@@ -102,7 +103,7 @@ SCRIPTS_SCHEDULE = {
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": False,
+        "enabled": True,
         "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
@@ -324,7 +325,7 @@ def cleanup_old_logs():
         logger.info(f"[LOG] Deleted {deleted_count} log file(s) older than {retention_days} day(s)")
 
 
-def send_email_notification(subject, body, attachment_path=None):
+def send_email_notification(subject, body, attachment_path=None, html_body=None):
     """Send an email notification if SMTP is configured."""
     email_cfg = CONFIG.get("email_notifications", {})
     if not email_cfg.get("enabled", False):
@@ -350,6 +351,9 @@ def send_email_notification(subject, body, attachment_path=None):
     message["From"] = from_email
     message["To"] = ", ".join(recipients)
     message.set_content(body)
+
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
 
     if attachment_path is not None:
         attachment = Path(attachment_path)
@@ -433,6 +437,9 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
 
 def classify_process_exit(run_context, exit_code):
     """Classify script exits so fatal repeated errors can be suppressed for the current window."""
+    if str(run_context.get("config_key") or "").upper() == "320TRADE" and exit_code == 0:
+        return "strategy_complete", "320trade completed normally", False
+
     recent_output = [line.strip() for line in run_context.get("recent_output", []) if str(line).strip()]
     normalized_output = "\n".join(recent_output[-10:]).lower()
 
@@ -492,15 +499,27 @@ def handle_process_state_changes(running_processes, script_launch_logged, blocke
         failure_signature, failure_summary, is_fatal = classify_process_exit(run_context, returncode)
         run_context["failure_signature"] = failure_signature
         run_context["failure_summary"] = failure_summary
-        logger.error(f"[CRASH] {config_key} crashed (exit code: {returncode})")
+        completed_normally = failure_signature == "strategy_complete"
+        if completed_normally:
+            logger.info(f"[COMPLETED] {config_key} finished normally")
+        else:
+            logger.error(f"[CRASH] {config_key} crashed (exit code: {returncode})")
         stop_script(
             run_context,
             SCRIPTS_SCHEDULE[config_key],
-            reason="Process exited unexpectedly",
+            reason="Strategy completed normally" if completed_normally else "Process exited unexpectedly",
             terminate_process=False,
         )
         del running_processes[config_key]
         script_launch_logged.discard(config_key)
+
+        if completed_normally:
+            blocked_failures[config_key] = {
+                "signature": failure_signature,
+                "summary": failure_summary,
+                "blocked_at": get_ist_time(),
+            }
+            continue
 
         if is_fatal:
             blocked_failures[config_key] = {
@@ -566,6 +585,29 @@ def should_script_run_now(script_config):
         return False
     
     return True
+
+
+def seconds_until_next_script_start(now=None):
+    now = now or get_ist_time()
+    delays = []
+    for script_config in SCRIPTS_SCHEDULE.values():
+        if not script_config.get("enabled", True):
+            continue
+        allowed_days = [
+            day for day in (_normalize_run_day(item) for item in script_config["run_days"])
+            if day is not None
+        ] if script_config.get("run_days") else []
+        if allowed_days and now.weekday() not in allowed_days:
+            continue
+        run_days_of_month = script_config.get("run_days_of_month")
+        if run_days_of_month is not None and now.day not in run_days_of_month:
+            continue
+        start_time = parse_time(script_config.get("run_time_start", "00:00"))
+        start_at = datetime.combine(now.date(), start_time, tzinfo=now.tzinfo)
+        delay = (start_at - now).total_seconds()
+        if delay > 0:
+            delays.append(delay)
+    return min(delays) if delays else None
 
 
 TRADE_SIGNAL_FIELDS = (
@@ -706,64 +748,111 @@ def _trade_report_summary(report_path):
         workbook.close()
 
 
-def _extract_320trade_summary(run_context):
-    """Extract the final CE/PE executed outcome from the script run log."""
-    config_key = str(run_context.get("config_key") or "").upper()
-    if config_key != "320TRADE":
-        return None
-
-    log_path = run_context.get("run_log_path")
-    if not log_path:
-        return None
-
-    path = Path(log_path)
-    if not path.exists():
-        return None
-
-    pattern = re.compile(
-        r"\[TRADE RESULT\]\s+Script=\S+\s+Side=(?P<side>\S+)\s+"
-        r"Symbol=(?P<symbol>\S+)\s+Strike=(?P<strike>\S+)\s+"
-        r"BuyAt=(?P<buy>[-+]?\d*\.?\d+)\s+"
-        r"SellAt=(?P<sell>[-+]?\d*\.?\d+)\s+"
-        r"PnL=(?P<pnl>[-+]?\d*\.?\d+)"
-    )
-
-    latest_by_symbol = {}
+def _320trade_outcome_rows(report_path):
+    workbook = load_workbook(report_path, read_only=True, data_only=True)
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                match = pattern.search(line.strip())
-                if not match:
-                    continue
-                symbol = match.group("symbol")
-                row = {
-                    "side": match.group("side"),
-                    "buy": float(match.group("buy")),
-                    "sell": float(match.group("sell")),
-                    "pnl": float(match.group("pnl")),
-                }
-                latest_by_symbol[symbol] = row
-    except Exception as exc:
-        logger.warning(f"[REPORT] Failed to parse 320trade result summary: {exc}")
-        return None
+        sheet = workbook["Trades"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        legs = {}
+        for values in sheet.iter_rows(min_row=2, values_only=True):
+            row = {name: values[index] for name, index in indices.items()}
+            symbol = str(row["Symbol"] or "")
+            side = str(row["Side"] or "").upper()
+            if not symbol or side not in {"BUY", "SELL"}:
+                continue
+            legs.setdefault(symbol, {})[side] = row
 
-    if not latest_by_symbol:
-        return None
+        outcomes = []
+        for symbol, events in sorted(legs.items()):
+            buy = events.get("BUY")
+            sell = events.get("SELL")
+            if not buy or not sell:
+                continue
+            try:
+                buy_price = float(buy["Price"])
+                sell_price = float(sell["Price"])
+                quantity = float(buy["Qty"] or sell["Qty"] or 0)
+            except (TypeError, ValueError):
+                continue
+            outcomes.append({
+                "symbol": symbol,
+                "strike": buy["Strike"] or sell["Strike"] or "",
+                "buy_time": buy["Time"] or "",
+                "buy_price": buy_price,
+                "sell_time": sell["Time"] or "",
+                "sell_price": sell_price,
+                "pnl": (sell_price - buy_price) * quantity,
+                "order_placed": (
+                    str(buy["Order Placed"] or "").upper() == "YES"
+                    and str(sell["Order Placed"] or "").upper() == "YES"
+                ),
+            })
+        return outcomes
+    finally:
+        workbook.close()
 
-    summary_lines = []
-    total_pnl = 0.0
-    for symbol in sorted(latest_by_symbol):
-        row = latest_by_symbol[symbol]
-        total_pnl += row["pnl"]
-        summary_lines.append(
-            f"{symbol}: BUY={row['buy']:.2f}, SELL={row['sell']:.2f}, PnL={row['pnl']:.2f}"
+
+def _320trade_summary_email_content(run_context, reason, report_path, counts):
+    outcomes = _320trade_outcome_rows(report_path)
+    trading_date = run_context["started_at"].strftime("%Y-%m-%d")
+    total, buys, sells, orders_placed = counts
+    text = [
+        "320trade completed",
+        f"Trading date: {trading_date}",
+        f"Stop reason: {reason}",
+        f"Trade signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})",
+    ]
+    if not outcomes:
+        text.append("No completed CE/PE trade outcomes were recorded.")
+        return "\n".join(text), None
+
+    columns = (
+        "Option", "Strike", "Buy time", "Buy price", "Sell time", "Sell price",
+        "Gross P&L (before charges)", "Mode",
+    )
+    text.append("")
+    text.append(" | ".join(columns))
+    text.append(" | ".join("-" * len(column) for column in columns))
+    for row in outcomes:
+        text.append(
+            f"{row['symbol']} | {row['strike']} | {row['buy_time']} | {row['buy_price']:.2f} | "
+            f"{row['sell_time']} | {row['sell_price']:.2f} | {row['pnl']:.2f} | "
+            f"{'Live' if row['order_placed'] else 'Paper/reference'}"
         )
-    summary_lines.append(f"Net PnL: {total_pnl:.2f}")
-    return "\n".join(summary_lines)
+    text.append(f"Total gross P&L (before charges): {sum(row['pnl'] for row in outcomes):.2f}")
+
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(row['symbol']))}</td>"
+        f"<td>{html.escape(str(row['strike']))}</td>"
+        f"<td>{html.escape(str(row['buy_time']))}</td>"
+        f"<td>{row['buy_price']:.2f}</td>"
+        f"<td>{html.escape(str(row['sell_time']))}</td>"
+        f"<td>{row['sell_price']:.2f}</td>"
+        f"<td>{row['pnl']:.2f}</td>"
+        f"<td>{'Live' if row['order_placed'] else 'Paper/reference'}</td>"
+        "</tr>"
+        for row in outcomes
+    )
+    html_body = (
+        "<html><body><h2>320trade completed</h2>"
+        f"<p>Trading date: {html.escape(trading_date)}<br>"
+        f"Stop reason: {html.escape(str(reason))}</p>"
+        f"<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
+        + "".join(f"<th>{html.escape(column)}</th>" for column in columns)
+        + "</tr></thead><tbody>"
+        + table_rows
+        + "</tbody></table>"
+        f"<p><strong>Total gross P&amp;L (before charges): {sum(row['pnl'] for row in outcomes):.2f}</strong></p>"
+        f"<p>Signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})</p>"
+        "</body></html>"
+    )
+    return "\n".join(text), html_body
 
 
 def email_daily_trade_summary(run_context, reason):
-    """Send one daily workbook summary when a trading script stops."""
+    """Send one daily summary when a trading script stops."""
     email_cfg = CONFIG.get("email_notifications", {})
     if not email_cfg.get("enabled", False) or not email_cfg.get("send_daily_summary_on_stop", True):
         return
@@ -781,6 +870,15 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
+    if str(run_context.get("config_key") or "").upper() == "320TRADE":
+        body, html_body = _320trade_summary_email_content(
+            run_context, reason, report_path, (total, buys, sells, orders_placed)
+        )
+        send_email_notification(
+            subject, body, attachment_path=report_path, html_body=html_body
+        )
+        return
+
     body = (
         f"Daily trading summary\n"
         f"Script: {run_context['config_key']}\n"
@@ -793,33 +891,40 @@ def email_daily_trade_summary(run_context, reason):
         f"Excel report: {report_path.name}"
     )
 
-    if str(run_context.get("config_key") or "").upper() == "320TRADE":
-        extra_summary = _extract_320trade_summary(run_context)
-        if extra_summary:
-            body = f"{body}\n\nExecuted 3:20 CE/PE outcome:\n{extra_summary}"
-
     send_email_notification(subject, body, attachment_path=report_path)
 
 
-def email_trade_signal(config_key, trade, report_path):
-    """Email one trade signal with the current daily trade report attached."""
-    subject = f"[TRADE] {config_key} {trade['Side']} {trade['Symbol']} at {trade['Time']}"
-    body = (
-        f"Trade order event\n"
-        f"Script: {config_key}\n"
-        f"Side: {trade['Side']}\n"
-        f"Time: {trade['Time']}\n"
-        f"Symbol: {trade['Symbol']}\n"
-        f"Strike: {trade['Strike']}\n"
-        f"Price: {trade['Price']}\n"
-        f"Reason: {trade['Reason']}\n"
-        f"Lots: {trade['Lots']}\n"
-        f"Lot size: {trade['Lot Size']}\n"
-        f"Quantity: {trade['Qty']}\n"
-        f"Order placed: {trade['Order Placed']}\n"
-        f"Daily Excel report: {report_path.name}"
+def email_trade_signal(config_key, trade):
+    """Email one trade event with its available execution details."""
+    side = trade.get("Side") or "UNKNOWN"
+    symbol = trade.get("Symbol") or "UNKNOWN"
+    trade_time = trade.get("Time") or "UNKNOWN"
+    subject = f"[TRADE] {config_key} {side} {symbol} at {trade_time}"
+    details = (
+        ("Script", config_key),
+        ("Action", side),
+        ("Time", trade_time),
+        ("Symbol", symbol),
+        ("Strike", trade.get("Strike") or "N/A"),
+        ("Price", trade.get("Price") or "N/A"),
+        ("Quantity", trade.get("Qty") or "N/A"),
+        ("Lots", trade.get("Lots") or "N/A"),
+        ("Lot size", trade.get("Lot Size") or "N/A"),
+        ("Reason", trade.get("Reason") or "N/A"),
+        ("Order placed", trade.get("Order Placed") or "UNKNOWN"),
     )
-    send_email_notification(subject, body, attachment_path=report_path)
+    body = "Trade order event\n\n" + "\n".join(
+        f"{label}: {value}" for label, value in details
+    )
+    rows = "".join(
+        "<tr>"
+        f"<th align='left'>{html.escape(label)}</th>"
+        f"<td>{html.escape(str(value))}</td>"
+        "</tr>"
+        for label, value in details
+    )
+    html_body = f"<html><body><h2>Trade order event</h2><table>{rows}</table></body></html>"
+    send_email_notification(subject, body, html_body=html_body)
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -835,7 +940,7 @@ def process_trade_signal(config_key, output_line, script_config=None):
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
     if is_new and send_on_signals and script_emails_enabled:
-        email_trade_signal(config_key, trade, report_path)
+        email_trade_signal(config_key, trade)
 
 
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
@@ -1008,7 +1113,11 @@ def scheduler_loop():
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
             
             # Sleep before next check
-            monitored_sleep(CONFIG["check_interval_seconds"], running_processes, script_launch_logged, blocked_failures)
+            sleep_seconds = float(CONFIG["check_interval_seconds"])
+            next_start_delay = seconds_until_next_script_start()
+            if next_start_delay is not None:
+                sleep_seconds = min(sleep_seconds, next_start_delay)
+            monitored_sleep(sleep_seconds, running_processes, script_launch_logged, blocked_failures)
     
     except KeyboardInterrupt:
         logger.info("[STOP] Scheduler stopped by user")

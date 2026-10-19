@@ -1,10 +1,10 @@
 # =============================================================================
-# 320trade.py - Expiry-day ATM CE+PE straddle on Groww API
+# 320trade.py - Expiry-day ITM CE+PE strategy on Groww API
 #
 # Flow:
 # 1) Check whether today matches a configured NIFTY or SENSEX expiry.
 # 2) Prefer the first instrument in expiry_priority that has a today expiry.
-# 3) At 15:20 IST, buy both ATM CE and ATM PE for that instrument.
+# 3) At 15:20 IST, buy CE and PE strikes 100 points ITM from ATM.
 # 4) Exit any leg immediately if profit reaches the configured take-profit or loss reaches the configured stop-loss.
 # 5) Square off all remaining legs exactly at 15:30 IST.
 # =============================================================================
@@ -40,10 +40,10 @@ CONFIG = {
 
     # Entry / exit schedule in IST.
     "trading_timezone_offset_minutes": 330,
-    "entry_window_start": "15:19",
-    "entry_window_end": "15:20",
-    "strike_decision_time": "15:14",
-    "fixed_strike_price": 320,
+    "entry_window_start": "15:20",
+    "entry_window_end": "15:21",
+    "strike_decision_time": "15:15",
+    "itm_offset_points": 100,
     "force_exit_time": "15:30",
     "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
 
@@ -126,6 +126,18 @@ def _make_paper_leg(order_symbol, price, reason="PAPER", qty=None, strike=None, 
         "paper_reason": reason,
         "strike": strike,
     }
+
+
+def _log_trade_signal(side, order_symbol, strike, price, reason, order_placed,
+                      lots=None, lot_size=None, qty=None, trade_time=None):
+    signal_time = trade_time or get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+    log_event(
+        f"[TRADE SIGNAL] Script=320trade Side={side} Time={signal_time} Symbol={order_symbol} "
+        f"Strike={strike if strike is not None else 'NA'} Price={float(price):.2f} "
+        f"Reason={reason} "
+        f"{f'Lots={lots} LotSize={lot_size} Qty={qty} ' if lots is not None else ''}"
+        f"OrderPlaced={'YES' if order_placed else 'NO'}"
+    )
 
 
 def _paper_tracking_enabled():
@@ -256,7 +268,7 @@ def get_session_state(now_dt=None):
         return "closed_day"
 
     current_time = dt_time(now_dt.hour, now_dt.minute, now_dt.second)
-    strike_decision = _parse_hhmm(CONFIG.get("strike_decision_time", "15:14"))
+    strike_decision = _parse_hhmm(CONFIG.get("strike_decision_time", "15:15"))
     entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "15:20"))
     entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "15:21"))
     force_exit = _parse_hhmm(CONFIG.get("force_exit_time", "15:30"))
@@ -538,39 +550,47 @@ def resolve_product_constant(product_type):
     }.get(pt, growwapi.PRODUCT_MIS)
 
 
-def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, instrument_cfg=None, strike=None):
+def place_buy_order(
+    order_symbol, price, exchange, segment, entry_price_label,
+    instrument_cfg=None, strike=None, available_margin=None,
+    margin_prechecked=False, defer_confirmation=False,
+):
     lot_size = _resolve_lot_size(instrument_cfg)
     lots_per_trade = _resolve_lots_per_trade(instrument_cfg)
     qty = lot_size * lots_per_trade
 
-    signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
-    log_event(
-        f"[TRADE SIGNAL] Script=320trade Side=BUY Time={signal_time} Symbol={order_symbol} "
-        f"Strike={strike if strike is not None else 'NA'} Price={float(price):.2f} "
-        f"Reason=Expiry straddle entry; price source={entry_price_label} reference "
-        f"Lots={lots_per_trade} LotSize={lot_size} Qty={qty} "
-        f"OrderPlaced={'YES' if bool(CONFIG.get('enable_actual_trade', True)) else 'NO'}"
-    )
     log_event(f"[BUY ATTEMPT] {order_symbol} Qty={qty} EstEntry={float(price):.2f} Source={entry_price_label}")
+
+    def make_paper_entry(reason):
+        leg = _make_paper_leg(
+            order_symbol, price, reason=reason, qty=qty, strike=strike, lot_size=lot_size
+        )
+        _log_trade_signal(
+            "BUY", order_symbol, strike, leg["entry_price"],
+            f"Expiry straddle entry ({reason})", False,
+            lots=lots_per_trade, lot_size=lot_size, qty=qty,
+            trade_time=leg["entry_time"].replace(" ", "T"),
+        )
+        return leg
 
     if not bool(CONFIG.get("enable_actual_trade", True)):
         log_event(f"[LIVE ORDER DISABLED] {order_symbol} running in paper tracking mode")
         if _paper_tracking_enabled():
-            return _make_paper_leg(order_symbol, price, reason="LIVE_ORDER_DISABLED", qty=qty, strike=strike, lot_size=lot_size)
+            return make_paper_entry("LIVE_ORDER_DISABLED")
         return None
 
-    margin = get_available_fno_margin()
+    margin = available_margin if margin_prechecked else get_available_fno_margin()
     if CONFIG.get("check_margin_before_order", True) and margin is None:
         log_event(f"[SKIP] Margin unavailable for {order_symbol}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} using estimated entry price because broker margin is unavailable")
-            return _make_paper_leg(order_symbol, price, reason="MARGIN_UNAVAILABLE", qty=qty, strike=strike, lot_size=lot_size)
+            return make_paper_entry("MARGIN_UNAVAILABLE")
         return None
     if margin is not None and margin <= 0:
         log_event(f"[BUY BLOCKED] {order_symbol}: no usable margin budget ({margin:.2f})")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} using estimated entry price because usable margin is zero")
-            return _make_paper_leg(order_symbol, price, reason="NO_MARGIN", qty=qty, strike=strike, lot_size=lot_size)
+            return make_paper_entry("NO_MARGIN")
         return None
 
     try:
@@ -579,7 +599,7 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
         log_event(f"[ERROR] BUY {order_symbol}: {exc}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker BUY request failed")
-            return _make_paper_leg(order_symbol, price, reason="BUY_REQUEST_FAILED", qty=qty, strike=strike, lot_size=lot_size)
+            return make_paper_entry("BUY_REQUEST_FAILED")
         return None
 
     order_id = resp.get("groww_order_id") if isinstance(resp, dict) else None
@@ -588,20 +608,60 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
         log_event(f"[BUY FAIL] {order_symbol} status={status} order_id={order_id or 'NA'}")
         if _paper_tracking_enabled():
             log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker buy did not fill")
-            return _make_paper_leg(order_symbol, price, reason=f"BROKER_{status}", qty=qty, strike=strike, lot_size=lot_size)
+            return make_paper_entry(f"BROKER_{status}")
         return None
-    if status in {"NEW", "PENDING", "OPEN"}:
-        time.sleep(2)
 
-    final_status, avg_price, _ = verify_order_execution(order_id, fallback_price=price)
+    pending_order = {
+        "pending_confirmation": True,
+        "order_id": order_id,
+        "status": status,
+        "order_symbol": order_symbol,
+        "qty": qty,
+        "reference_price": float(price),
+        "entry_price_label": entry_price_label,
+        "strike": strike,
+        "lots": lots_per_trade,
+        "lot_size": lot_size,
+    }
+    if defer_confirmation:
+        return pending_order
+    return confirm_buy_order(pending_order)
+
+
+def confirm_buy_order(pending_order):
+    if not pending_order or not pending_order.get("pending_confirmation"):
+        return pending_order
+
+    order_id = pending_order["order_id"]
+    order_symbol = pending_order["order_symbol"]
+    qty = pending_order["qty"]
+    reference_price = pending_order["reference_price"]
+    entry_price_label = pending_order["entry_price_label"]
+    strike = pending_order["strike"]
+    lots_per_trade = pending_order["lots"]
+    lot_size = pending_order["lot_size"]
+    if pending_order["status"] in {"NEW", "PENDING", "OPEN"}:
+        time.sleep(2)
+    final_status, avg_price, _ = verify_order_execution(
+        order_id, fallback_price=reference_price
+    )
     if final_status in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
-        exec_price = avg_price if avg_price and avg_price > 0 else price
-        log_event(f"[BUY CONFIRMED] {order_symbol} Qty={qty} Entry={exec_price:.2f} {entry_price_label}={price:.2f} OrderID={order_id}")
+        exec_price = avg_price if avg_price and avg_price > 0 else reference_price
+        entry_time = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+        log_event(
+            f"[BUY CONFIRMED] {order_symbol} Qty={qty} Entry={exec_price:.2f} "
+            f"{entry_price_label}={reference_price:.2f} OrderID={order_id}"
+        )
+        _log_trade_signal(
+            "BUY", order_symbol, strike, exec_price, "Expiry straddle entry", True,
+            lots=lots_per_trade, lot_size=lot_size, qty=qty,
+            trade_time=entry_time.replace(" ", "T"),
+        )
         return {
             "order_symbol": order_symbol,
             "qty": qty,
             "entry_price": exec_price,
-            "entry_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "entry_time": entry_time,
             "broker_order_placed": True,
             "paper_only": False,
             "strike": strike,
@@ -609,17 +669,22 @@ def place_buy_order(order_symbol, price, exchange, segment, entry_price_label, i
     log_event(f"[BUY FAIL] {order_symbol} final status={final_status}")
     if _paper_tracking_enabled():
         log_event(f"[PAPER ENTRY] {order_symbol} recorded because broker buy execution was not confirmed")
-        return _make_paper_leg(order_symbol, price, reason=f"UNCONFIRMED_{final_status}", qty=qty, strike=strike, lot_size=lot_size)
+        leg = _make_paper_leg(
+            order_symbol, reference_price, reason=f"UNCONFIRMED_{final_status}",
+            qty=qty, strike=strike, lot_size=lot_size,
+        )
+        _log_trade_signal(
+            "BUY", order_symbol, strike, leg["entry_price"],
+            f"Expiry straddle entry (UNCONFIRMED_{final_status})", False,
+            lots=lots_per_trade, lot_size=lot_size, qty=qty,
+            trade_time=leg["entry_time"].replace(" ", "T"),
+        )
+        return leg
     return None
 
 
 def place_sell_order(order_symbol, price, reason, qty, strike=None, entry_price=None):
     try:
-        signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
-        log_event(
-            f"[TRADE SIGNAL] Script=320trade Side=SELL Time={signal_time} Symbol={order_symbol} "
-            f"Strike={strike if strike is not None else 'NA'} Price={float(price):.2f} Reason={reason} OrderPlaced=YES"
-        )
         log_event(f"[SELL ATTEMPT] {order_symbol} Qty={qty} Price={float(price):.2f} Reason={reason}")
         resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_SELL, growwapi.PRODUCT_MIS)
         order_id = resp.get("groww_order_id") if isinstance(resp, dict) else None
@@ -635,6 +700,11 @@ def place_sell_order(order_symbol, price, reason, qty, strike=None, entry_price=
             exec_price = avg_price if avg_price and avg_price > 0 else price
             entry_value = float(entry_price if entry_price is not None else price)
             pnl = (exec_price - entry_value) * qty
+            signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
+            _log_trade_signal(
+                "SELL", order_symbol, strike, exec_price, reason, True,
+                trade_time=signal_time,
+            )
             log_event(f"[EXIT CONFIRMED] {order_symbol} x{qty} | Reason={reason} | Exit={exec_price:.2f} OrderID={order_id}")
             log_event(f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={strike if strike is not None else 'NA'} BuyAt={entry_value:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
             return order_id
@@ -665,23 +735,36 @@ def get_latest_index_price(instrument_cfg, use_previous_close=False):
     return price, candle_time, open_price
 
 
-def select_fixed_strike(side):
-    fixed = int(CONFIG.get("fixed_strike_price", 315) or 315)
-    if side == "CE":
-        return fixed
-    if side == "PE":
-        return fixed
-    return fixed
+def select_atm_strike(instrument_cfg, index_price):
+    strike_step = int(instrument_cfg["strike_step"])
+    strike = int(math.floor(float(index_price) / strike_step + 0.5)) * strike_step
+    strike_start = int(instrument_cfg["strike_start"])
+    strike_end = int(instrument_cfg["strike_end"])
+    if strike < strike_start or strike > strike_end:
+        raise ValueError(
+            f"ATM strike {strike} outside configured range "
+            f"{strike_start}-{strike_end} for {instrument_cfg['root']}"
+        )
+    return strike
 
 
-def build_entry_contracts(instrument_key, instrument_cfg, expiry_entry, index_price):
-    ce_strike = select_fixed_strike("CE")
-    pe_strike = select_fixed_strike("PE")
-
-    if ce_strike < int(instrument_cfg["strike_start"]) or ce_strike > int(instrument_cfg["strike_end"]):
-        raise ValueError(f"Fixed CE strike {ce_strike} outside configured range for {instrument_key}")
-    if pe_strike < int(instrument_cfg["strike_start"]) or pe_strike > int(instrument_cfg["strike_end"]):
-        raise ValueError(f"Fixed PE strike {pe_strike} outside configured range for {instrument_key}")
+def build_entry_contracts(instrument_key, instrument_cfg, expiry_entry, strike):
+    itm_offset = int(instrument_cfg.get("itm_offset_points", CONFIG.get("itm_offset_points", 100)))
+    if itm_offset <= 0 or itm_offset % int(instrument_cfg["strike_step"]) != 0:
+        raise ValueError(
+            f"ITM offset {itm_offset} must be a positive multiple of "
+            f"{instrument_cfg['strike_step']} for {instrument_key}"
+        )
+    ce_strike = int(strike) - itm_offset
+    pe_strike = int(strike) + itm_offset
+    strike_start = int(instrument_cfg["strike_start"])
+    strike_end = int(instrument_cfg["strike_end"])
+    for side, selected_strike in (("CE", ce_strike), ("PE", pe_strike)):
+        if selected_strike < strike_start or selected_strike > strike_end:
+            raise ValueError(
+                f"ITM {side} strike {selected_strike} outside configured range "
+                f"{strike_start}-{strike_end} for {instrument_key}"
+            )
 
     root = instrument_cfg["root"]
     expiry_fs = expiry_entry["candle_expiry"]
@@ -811,20 +894,65 @@ def try_open_320trade(state):
         return
 
     now_ist = get_ist_now()
+    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "15:20"))
+    strike_decision = _parse_hhmm(CONFIG.get("strike_decision_time", "15:15"))
     if not entry_window_open(now_ist):
+        current_time = dt_time(now_ist.hour, now_ist.minute, now_ist.second)
+        if current_time < strike_decision or current_time >= entry_start:
+            return
+        if state.get("selected_strike") is None:
+            index_price, candle_time, _ = get_latest_index_price(
+                state["instrument_cfg"], use_previous_close=True
+            )
+            if index_price is None:
+                return
+            strike = select_atm_strike(state["instrument_cfg"], index_price)
+            state["selected_strike"] = strike
+            state["selected_index_price"] = index_price
+            state["selected_candle_time"] = candle_time
+            log_event(
+                f"[STRIKE SELECTED] {state['instrument']} Strike={strike} "
+                f"index_ref={index_price:.2f} closed_candle={candle_time}"
+            )
         return
 
-    index_price, candle_time, candle_open = get_latest_index_price(state["instrument_cfg"], use_previous_close=True)
-    if index_price is None:
-        return
-
-    contracts = build_entry_contracts(state["instrument"], state["instrument_cfg"], state["expiry_entry"], index_price)
+    strike = state.get("selected_strike")
+    if strike is None:
+        index_price, candle_time, _ = get_latest_index_price(
+            state["instrument_cfg"], use_previous_close=True
+        )
+        if index_price is None:
+            return
+        strike = select_atm_strike(state["instrument_cfg"], index_price)
+        state["selected_strike"] = strike
+        state["selected_index_price"] = index_price
+        state["selected_candle_time"] = candle_time
+        log_event(
+            f"[WARN] Strike was not selected at {CONFIG['strike_decision_time']} IST; "
+            f"using latest closed candle {candle_time} at entry"
+        )
+    index_price = state["selected_index_price"]
+    candle_time = state["selected_candle_time"]
+    contracts = build_entry_contracts(
+        state["instrument"], state["instrument_cfg"], state["expiry_entry"], strike
+    )
     log_event(
         f"[ENTRY] {state['instrument']} expiry={contracts['expiry_fs']} order={contracts['order_expiry']} "
-        f"ITM CE={contracts['ce_strike']} PE={contracts['pe_strike']} index_ref={index_price:.2f} used_from_closed_candle={candle_time}"
+        f"ITM CE={contracts['ce_strike']} PE={contracts['pe_strike']} "
+        f"ATM={strike} index_ref={index_price:.2f} used_from_closed_candle={candle_time}"
     )
 
-    ce_leg = place_buy_order(
+    margin_check_enabled = state["instrument_cfg"].get(
+        "check_margin_before_order", CONFIG.get("check_margin_before_order", True)
+    )
+    if margin_check_enabled and CONFIG.get("enable_actual_trade", True):
+        if not state.get("margin_prechecked"):
+            state["available_margin"] = get_available_fno_margin()
+            state["margin_prechecked"] = True
+        available_margin = state.get("available_margin")
+    else:
+        available_margin = None
+    ce_order = place_buy_order(
         contracts["ce"]["order_symbol"],
         price=index_price,
         exchange=state["instrument_cfg"]["exchange"],
@@ -832,12 +960,15 @@ def try_open_320trade(state):
         entry_price_label="INDEX",
         instrument_cfg=state["instrument_cfg"],
         strike=contracts["ce_strike"],
+        available_margin=available_margin,
+        margin_prechecked=True,
+        defer_confirmation=True,
     )
-    if ce_leg is None:
+    if ce_order is None:
         log_event("[ENTRY FAIL] CE leg failed")
         return
 
-    pe_leg = place_buy_order(
+    pe_order = place_buy_order(
         contracts["pe"]["order_symbol"],
         price=index_price,
         exchange=state["instrument_cfg"]["exchange"],
@@ -845,7 +976,21 @@ def try_open_320trade(state):
         entry_price_label="INDEX",
         instrument_cfg=state["instrument_cfg"],
         strike=contracts["pe_strike"],
+        available_margin=available_margin,
+        margin_prechecked=True,
+        defer_confirmation=True,
     )
+    ce_leg = confirm_buy_order(ce_order)
+    pe_leg = confirm_buy_order(pe_order) if pe_order is not None else None
+    if ce_leg is None:
+        log_event("[ENTRY FAIL] CE leg execution was not confirmed")
+        if pe_leg is not None and not pe_leg.get("paper_only"):
+            place_sell_order(
+                pe_leg["order_symbol"], pe_leg["entry_price"], "Entry rollback",
+                pe_leg["qty"], strike=contracts["pe_strike"],
+                entry_price=pe_leg["entry_price"],
+            )
+        return
     if pe_leg is None:
         log_event("[ENTRY FAIL] PE leg failed, flattening CE leg")
         if not ce_leg.get("paper_only"):
@@ -883,6 +1028,9 @@ def main_loop():
         "instrument_cfg": instrument_cfg,
         "expiry_entry": expiry_entry,
         "entered": False,
+        "selected_strike": None,
+        "margin_prechecked": False,
+        "available_margin": None,
         "ce": None,
         "pe": None,
         "contracts": None,
@@ -916,14 +1064,51 @@ def main_loop():
 
             if session_state == "squareoff":
                 close_remaining_positions(state, "TIME_SQUAREOFF_15_30")
+                if state.get("entered") and all(
+                    state.get(leg_key) and state[leg_key].get("closed")
+                    for leg_key in ("ce", "pe")
+                ):
+                    log_event("[STRATEGY COMPLETE] Both CE and PE legs closed")
                 break
 
             if not state["entered"] and session_state in {"select_strike", "entry"}:
                 try_open_320trade(state)
             elif state["entered"]:
                 monitor_open_positions(state)
+                if all(
+                    state.get(leg_key) and state[leg_key].get("closed")
+                    for leg_key in ("ce", "pe")
+                ):
+                    log_event("[STRATEGY COMPLETE] Both CE and PE legs closed")
+                    break
 
-            time.sleep(5)
+            if not state["entered"] and session_state == "select_strike":
+                sleep_now = get_ist_now()
+                seconds_until_entry = (
+                    datetime.combine(sleep_now.date(), _parse_hhmm(CONFIG["entry_window_start"]))
+                    - sleep_now.replace(tzinfo=None)
+                ).total_seconds()
+                if (
+                    0 < seconds_until_entry <= 10
+                    and not state.get("margin_prechecked")
+                    and CONFIG.get("enable_actual_trade", True)
+                    and state["instrument_cfg"].get(
+                        "check_margin_before_order",
+                        CONFIG.get("check_margin_before_order", True),
+                    )
+                ):
+                    state["available_margin"] = get_available_fno_margin()
+                    state["margin_prechecked"] = True
+                    sleep_now = get_ist_now()
+                    seconds_until_entry = (
+                        datetime.combine(
+                            sleep_now.date(), _parse_hhmm(CONFIG["entry_window_start"])
+                        )
+                        - sleep_now.replace(tzinfo=None)
+                    ).total_seconds()
+                time.sleep(max(0.05, min(5.0, seconds_until_entry)))
+            else:
+                time.sleep(5)
         except KeyboardInterrupt:
             close_remaining_positions(state, "MANUAL_STOP")
             break

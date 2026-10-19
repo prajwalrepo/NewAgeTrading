@@ -79,7 +79,7 @@ CONFIG = {
     # Lot sizing is single-sized across CE/PE.
     "lot_size": 65,
     "max_lots_per_trade": 16,
-    "allocation_per_trade": 30000,
+    "allocation_per_trade": 35000,
     "check_margin_before_order": True,
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
@@ -98,10 +98,10 @@ CONFIG = {
     # trailing_stop_loss_points = gap kept behind the highest price
     # trailing_stop_trigger_points = minimum profit required before activation
     "trailing_stop_enabled": True,
-    "trailing_stop_loss_points": 10,
+    "trailing_stop_loss_points": 8,
     "high_premium_trailing_stop_threshold": 150,
-    "high_premium_trailing_stop_extra_points": 5,
-    "trailing_stop_trigger_points": 10,
+    "high_premium_trailing_stop_extra_points": 3,
+    "trailing_stop_trigger_points": 8,
     "max_profit_check_interval_sec": 60,
     "buy_cooldown_candles": 3,
     "exit_order_cooldown_sec": 90,
@@ -1332,12 +1332,12 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
             signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            lot_size = int(CONFIG.get("lot_size", 1) or 1)
             print(
                 f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} "
                 f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
-                f"Price={exec_price:.2f} Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
-                f"Lots={int(qty) // lot_size} LotSize={lot_size} Qty={int(qty)} OrderPlaced=YES",
+                f"Price={exec_price:.2f} Qty={int(qty)} "
+                f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
+                f"OrderPlaced=YES",
                 flush=True,
             )
             print_open_position_risk_levels(ts)
@@ -1397,12 +1397,10 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             pnl = (exec_price - entry_price) * qty_units
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            lot_size = int(CONFIG.get("lot_size", 1) or 1)
             print(
                 f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} "
                 f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
-                f"Reason={reason} Lots={qty_units // lot_size} LotSize={lot_size} "
-                f"Qty={qty_units} OrderPlaced=YES",
+                f"Qty={qty_units} Reason={reason} OrderPlaced=YES",
                 flush=True,
             )
             print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")

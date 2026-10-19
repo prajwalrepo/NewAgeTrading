@@ -1352,6 +1352,13 @@ def live_signal_loop():
                         if open_position:
                             place_sell_order(signal_symbol, open_position.get("order_symbol"), float(exit_price), reason="DIRECTION_CHANGE", qty=open_position.get("qty"))
                         else:
+                            signal_time = str(idx_time).replace(" ", "T", 1)
+                            print(
+                                f"[TRADE SIGNAL] Script=NATGASMINI Side=SELL Time={signal_time} "
+                                f"Symbol={signal_symbol} Strike={debug_position.get('strike', 'NA')} "
+                                f"Price={float(exit_price):.2f} Reason=DIRECTION_CHANGE OrderPlaced=NO",
+                                flush=True,
+                            )
                             print(f"[{idx_time}] [DEBUG SELL SIGNAL] {signal_symbol} TrackedBuy={debug_position['entry_price']:.2f} ExitPrice={float(exit_price):.2f}")
                             debug_signal_positions.pop(signal_symbol, None)
 

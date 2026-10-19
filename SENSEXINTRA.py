@@ -85,14 +85,14 @@ CONFIG = {
     "max_trades_per_day_ce": 4,
     "max_trades_per_day_pe": 4,
     "max_reentries_per_day": 2,
-    "max_profit_per_day": 12000,
-    "max_loss_per_day": 2500,
+    "max_profit_per_day": 15000,
+    "max_loss_per_day": 3000,
 
     # Risk / exits
     "special_exit_enabled": True,
     # Max profit booking (configurable points)
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 100,
+    "max_profit_booking_points": 150,
     "loss_stop_points": 5,
 
     # Trailing stop-loss (configurable points)
@@ -1332,12 +1332,12 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
             signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            lot_size = int(CONFIG.get("lot_size", 1) or 1)
             print(
                 f"[TRADE SIGNAL] Script=SENSEXINTRA Side=BUY Time={signal_time} "
                 f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
-                f"Price={exec_price:.2f} Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
-                f"Lots={int(qty) // lot_size} LotSize={lot_size} Qty={int(qty)} OrderPlaced=YES",
+                f"Price={exec_price:.2f} Qty={int(qty)} "
+                f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
+                f"OrderPlaced=YES",
                 flush=True,
             )
             print_open_position_risk_levels(ts)
@@ -1397,12 +1397,10 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             pnl = (exec_price - entry_price) * qty_units
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            lot_size = int(CONFIG.get("lot_size", 1) or 1)
             print(
                 f"[TRADE SIGNAL] Script=SENSEXINTRA Side=SELL Time={signal_time} "
                 f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
-                f"Reason={reason} Lots={qty_units // lot_size} LotSize={lot_size} "
-                f"Qty={qty_units} OrderPlaced=YES",
+                f"Qty={qty_units} Reason={reason} OrderPlaced=YES",
                 flush=True,
             )
             print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")

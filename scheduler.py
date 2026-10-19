@@ -908,8 +908,6 @@ def email_trade_signal(config_key, trade):
         ("Strike", trade.get("Strike") or "N/A"),
         ("Price", trade.get("Price") or "N/A"),
         ("Quantity", trade.get("Qty") or "N/A"),
-        ("Lots", trade.get("Lots") or "N/A"),
-        ("Lot size", trade.get("Lot Size") or "N/A"),
         ("Reason", trade.get("Reason") or "N/A"),
         ("Order placed", trade.get("Order Placed") or "UNKNOWN"),
     )

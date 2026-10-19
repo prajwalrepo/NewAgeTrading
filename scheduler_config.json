@@ -85,7 +85,7 @@
       "enabled": true,
       "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "16:30",
+      "run_time_start": "16:00",
       "run_time_end": "23:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,

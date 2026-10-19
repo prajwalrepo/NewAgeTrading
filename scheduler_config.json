@@ -68,7 +68,7 @@
     "OILMINI": {
       "script_name": "OILMINI.py",
       "description": "Crude Oil Mini Options Strategy (MCX)",
-      "enabled": true,
+      "enabled": false,
       "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],

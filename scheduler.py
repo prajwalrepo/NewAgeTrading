@@ -22,6 +22,7 @@ import mimetypes
 import re
 import hashlib
 import html
+import tempfile
 from collections import deque
 from datetime import datetime, timedelta, time as dt_time, timezone
 from email.message import EmailMessage
@@ -624,8 +625,8 @@ TRADE_REPORT_COLUMNS = (
 TRADE_REPORT_LOCK = threading.Lock()
 
 
-def _initialize_trade_report_sheet(workbook):
-    sheet = workbook.active
+def _initialize_trade_report_sheet(workbook, sheet=None):
+    sheet = sheet or workbook.active
     sheet.title = "Trades"
     sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
     for cell in sheet[1]:
@@ -635,6 +636,28 @@ def _initialize_trade_report_sheet(workbook):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
     sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
     return sheet
+
+
+def _save_trade_report(workbook, report_path):
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{report_path.stem}.",
+            suffix=".xlsx",
+            dir=report_path.parent,
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+        workbook.save(temporary_path)
+        os.replace(temporary_path, report_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def parse_trade_signal(line):
@@ -684,32 +707,45 @@ def append_trade_to_report(config_key, trade):
     event_key = hashlib.sha256(event_data.encode("utf-8")).hexdigest()
     report_path = _trade_report_path(config_key, trade["Time"])
     with TRADE_REPORT_LOCK:
-        if report_path.exists():
-            workbook = load_workbook(report_path)
-            sheet = workbook["Trades"]
+        workbook = load_workbook(report_path) if report_path.exists() else Workbook()
+        try:
+            if "Trades" in workbook.sheetnames:
+                sheet = workbook["Trades"]
+                headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+                if not any(headers):
+                    _initialize_trade_report_sheet(workbook, sheet)
+                elif headers[:len(TRADE_REPORT_COLUMNS)] != TRADE_REPORT_COLUMNS:
+                    raise ValueError(f"Unexpected trade report columns in {report_path}")
+                elif len(headers) < len(TRADE_REPORT_COLUMNS) + 1:
+                    sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1, value="Event Key")
+                    sheet.column_dimensions[
+                        sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter
+                    ].hidden = True
+            else:
+                sheet = _initialize_trade_report_sheet(workbook, workbook.create_sheet("Trades"))
+
             key_column = len(TRADE_REPORT_COLUMNS) + 1
             if any(
                 row[0].value == event_key
                 for row in sheet.iter_rows(min_row=2, min_col=key_column, max_col=key_column)
             ):
                 return report_path, False
-        else:
-            workbook = Workbook()
-            sheet = _initialize_trade_report_sheet(workbook)
 
-        row = []
-        for column in TRADE_REPORT_COLUMNS:
-            value = trade[column]
-            if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
-                try:
-                    number = float(value)
-                    value = int(number) if number.is_integer() else number
-                except ValueError:
-                    pass
-            row.append(value)
-        sheet.append(tuple(row) + (event_key,))
-        sheet.auto_filter.ref = sheet.dimensions
-        workbook.save(report_path)
+            row = []
+            for column in TRADE_REPORT_COLUMNS:
+                value = trade[column]
+                if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
+                    try:
+                        number = float(value)
+                        value = int(number) if number.is_integer() else number
+                    except ValueError:
+                        pass
+                row.append(value)
+            sheet.append(tuple(row) + (event_key,))
+            sheet.auto_filter.ref = sheet.dimensions
+            _save_trade_report(workbook, report_path)
+        finally:
+            workbook.close()
     return report_path, True
 
 
@@ -723,8 +759,11 @@ def _ensure_trade_report_exists(report_path):
         if report_path.exists():
             return
         workbook = Workbook()
-        _initialize_trade_report_sheet(workbook)
-        workbook.save(report_path)
+        try:
+            _initialize_trade_report_sheet(workbook)
+            _save_trade_report(workbook, report_path)
+        finally:
+            workbook.close()
 
 
 def _trade_report_summary(report_path):
@@ -930,11 +969,11 @@ def process_trade_signal(config_key, output_line, script_config=None):
     trade = parse_trade_signal(output_line)
     if trade is None:
         return
+    is_new = True
     try:
-        report_path, is_new = append_trade_to_report(config_key, trade)
+        _, is_new = append_trade_to_report(config_key, trade)
     except Exception as exc:
         logger.error(f"[REPORT] Failed to record trade signal for {config_key}: {exc}")
-        return
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
     if is_new and send_on_signals and script_emails_enabled:

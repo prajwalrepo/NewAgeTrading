@@ -38,7 +38,7 @@
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal; no Excel attachment on signal emails"
+      "notes": "Order placement is configured inside NIFTYIntra.py. Immediate mail for every generated signal."
     },
 
     "SENSEXINTRA": {
@@ -50,7 +50,7 @@
       "run_time_end": "15:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal; no Excel attachment on signal emails"
+      "notes": "Order placement is configured inside SENSEXINTRA.py. Immediate mail for every generated signal."
     },
 
     "320trade": {
@@ -61,8 +61,8 @@
       "run_time_start": "15:15",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
-      "send_signal_emails": false,
-      "notes": "Selects 100-point ITM strikes at 15:15 and starts CE/PE market buys at 15:20. Sends a CE/PE result table and Excel workbook after both legs close."
+      "send_signal_emails": true,
+      "notes": "Order placement is configured inside 320trade.py. Selects 100-point ITM strikes at 15:15 and starts CE/PE market buys at 15:20. Sends signal emails and a CE/PE result table with Excel workbook after both legs close."
     },
 
     "OILMINI": {
@@ -76,7 +76,7 @@
       "run_time_end": "23:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal"
+      "notes": "Order placement is configured inside OILMINI.py. Immediate mail for every generated signal."
     },
 
     "NATGASMINI": {
@@ -89,7 +89,7 @@
       "run_time_end": "23:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Immediate mail for every generated signal"
+      "notes": "Order placement is configured inside NATGASMINI.py. Immediate mail for every generated signal."
     },
 
     "SupperWeekScan": {

@@ -77,6 +77,7 @@ CONFIG = {
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
+    "enable_actual_trade": True,
     "lot_size": 65,
     "max_lots_per_trade": 16,
     "allocation_per_trade": 35000,
@@ -705,6 +706,19 @@ def infer_side_from_symbol(symbol):
 
 
 def get_live_open_positions():
+    if not CONFIG.get("enable_actual_trade", True):
+        return {
+            symbol: {
+                "qty": int(pos.get("qty", 0)),
+                "entry_price": float(pos.get("entry_price", 0) or 0),
+                "order_symbol": pos.get("order_symbol", symbol),
+                "product_type": pos.get("product_type", "MIS"),
+                "status": "OPEN",
+                "side": pos.get("side"),
+            }
+            for symbol, pos in positions.items()
+            if pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
+        }
     raw = get_open_fno_positions()
     if not raw:
         return {}
@@ -1260,8 +1274,9 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         lot_size = int(CONFIG.get("lot_size", 1) or 1)
         max_lots = int(CONFIG.get("max_lots_per_trade", 0) or 0)
 
-        fno_margin = get_available_fno_margin()
-        if CONFIG.get("check_margin_before_order", True) and fno_margin is None:
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        fno_margin = get_available_fno_margin() if actual_trade_enabled else None
+        if actual_trade_enabled and CONFIG.get("check_margin_before_order", True) and fno_margin is None:
             print("[SKIP] Margin unavailable")
             return None
 
@@ -1292,58 +1307,67 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         if max_lots > 0:
             qty = min(int(qty), max_lots * lot_size)
 
-        resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_BUY, growwapi.PRODUCT_MIS)
-        order_id = resp.get("groww_order_id")
-        status = resp.get("order_status", "UNKNOWN")
-        if status in {"REJECTED", "CANCELLED", "FAILED"}:
-            print(f"[REJECTED] BUY {candle_symbol}")
-            return None
-        if status in {"NEW", "PENDING", "OPEN"}:
-            time.sleep(2)
+        if actual_trade_enabled:
+            resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_BUY, growwapi.PRODUCT_MIS)
+            order_id = resp.get("groww_order_id")
+            status = resp.get("order_status", "UNKNOWN")
+            if status in {"REJECTED", "CANCELLED", "FAILED"}:
+                print(f"[REJECTED] BUY {candle_symbol}")
+                return None
+            if status in {"NEW", "PENDING", "OPEN"}:
+                time.sleep(2)
 
-        final_status, avg_price, _ = verify_order_execution(order_id, candle_symbol, fallback_price=price)
-        if final_status in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
+            final_status, avg_price, _ = verify_order_execution(order_id, candle_symbol, fallback_price=price)
+            if final_status not in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
+                print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
+                return None
             exec_price = avg_price if avg_price and avg_price > 0 else price
-            candle_low = float(entry_candle_low if entry_candle_low is not None else entry_candle_open)
-            loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
-            trail_gap = _trailing_stop_gap_for_entry(exec_price)
-            positions[candle_symbol] = {
-                "status": "OPEN",
-                "entry_price": exec_price,
-                "entry_candle_open": float(entry_candle_open),
-                "entry_candle_low": candle_low,
-                "entry_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "qty": int(qty),
-                "order_symbol": order_symbol,
-                "product_type": "MIS",
-                "side": candle_to_side.get(candle_symbol),
-                "strike": strike,
-                "highest_price": exec_price,
-                "stop_loss_price": candle_low - loss_stop_pips,
-                "trailing_sl_activated": False,
-                "trailing_stop_loss_points": trail_gap,
-                "trailing_stop_price": exec_price - trail_gap,
-            }
-            if is_reentry:
-                reentries_today[side] = reentries_today.get(side, 0) + 1
-            else:
-                increment_trade_count(candle_symbol)
-            clear_pullback_reentry(candle_symbol)
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] [BUY CONFIRMED] {candle_symbol} Qty={int(qty)} OrderID={order_id}")
-            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            print(
-                f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} "
-                f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
-                f"Price={exec_price:.2f} Qty={int(qty)} "
-                f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
-                f"OrderPlaced=YES",
-                flush=True,
-            )
-            print_open_position_risk_levels(ts)
-            return order_id
-        print(f"[BUY FAIL] {candle_symbol} final status={final_status}")
-        return None
+        else:
+            order_id = None
+            exec_price = float(price)
+
+        candle_low = float(entry_candle_low if entry_candle_low is not None else entry_candle_open)
+        loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
+        trail_gap = _trailing_stop_gap_for_entry(exec_price)
+        positions[candle_symbol] = {
+            "status": "OPEN",
+            "entry_price": exec_price,
+            "entry_candle_open": float(entry_candle_open),
+            "entry_candle_low": candle_low,
+            "entry_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "qty": int(qty),
+            "order_symbol": order_symbol,
+            "product_type": "MIS",
+            "side": candle_to_side.get(candle_symbol),
+            "strike": strike,
+            "highest_price": exec_price,
+            "stop_loss_price": candle_low - loss_stop_pips,
+            "trailing_sl_activated": False,
+            "trailing_stop_loss_points": trail_gap,
+            "trailing_stop_price": exec_price - trail_gap,
+        }
+        if is_reentry:
+            reentries_today[side] = reentries_today.get(side, 0) + 1
+        else:
+            increment_trade_count(candle_symbol)
+        clear_pullback_reentry(candle_symbol)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"[{ts}] [{'BUY CONFIRMED' if actual_trade_enabled else 'PAPER BUY TRACKED'}] "
+            f"{candle_symbol} Qty={int(qty)}"
+            + (f" OrderID={order_id}" if order_id else "")
+        )
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Script=NIFTYIntra Side=BUY Time={signal_time} "
+            f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
+            f"Price={exec_price:.2f} Qty={int(qty)} "
+            f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
+            f"OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            flush=True,
+        )
+        print_open_position_risk_levels(ts)
+        return order_id
     except Exception as exc:
         print(f"[ERROR] BUY {candle_symbol}: {exc}")
         return None
@@ -1379,46 +1403,52 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         exit_attempt_tracker[candle_symbol] = now_ts
         exit_reason_tracker[candle_symbol] = reason
 
-        resp = place_order_with_retry(actual_symbol, qty_units, growwapi.TRANSACTION_TYPE_SELL, product_constant)
-        order_id = resp.get("groww_order_id")
-        status = resp.get("order_status", "UNKNOWN")
-        if status in {"REJECTED", "CANCELLED", "FAILED"}:
-            print(f"[ORDER REJECTED] SELL {candle_symbol} Qty={qty_units} | Status={status}")
-            exit_attempt_tracker.pop(candle_symbol, None)
-            exit_reason_tracker.pop(candle_symbol, None)
-            return None
-        if status in {"NEW", "PENDING", "OPEN"}:
-            time.sleep(2)
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        if actual_trade_enabled:
+            resp = place_order_with_retry(actual_symbol, qty_units, growwapi.TRANSACTION_TYPE_SELL, product_constant)
+            order_id = resp.get("groww_order_id")
+            status = resp.get("order_status", "UNKNOWN")
+            if status in {"REJECTED", "CANCELLED", "FAILED"}:
+                print(f"[ORDER REJECTED] SELL {candle_symbol} Qty={qty_units} | Status={status}")
+                exit_attempt_tracker.pop(candle_symbol, None)
+                exit_reason_tracker.pop(candle_symbol, None)
+                return None
+            if status in {"NEW", "PENDING", "OPEN"}:
+                time.sleep(2)
 
-        final_status, avg_price, _ = verify_order_execution(order_id, candle_symbol, fallback_price=price)
-        if final_status in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
+            final_status, avg_price, _ = verify_order_execution(order_id, candle_symbol, fallback_price=price)
+            if final_status not in {"EXECUTED", "COMPLETED", "DELIVERY_AWAITED"}:
+                return None
             exec_price = avg_price if avg_price and avg_price > 0 else price
-            entry_price = float(pos.get("entry_price", exec_price))
-            pnl = (exec_price - entry_price) * qty_units
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            print(
-                f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} "
-                f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
-                f"Qty={qty_units} Reason={reason} OrderPlaced=YES",
-                flush=True,
-            )
-            print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
-            print(f"[{ts}] [TRADE RESULT] Script=NIFTYIntra Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
-            update_daily_pnl(pnl)
-            positions[candle_symbol]["status"] = "CLOSED"
-            positions[candle_symbol]["exit_price"] = exec_price
-            positions[candle_symbol]["exit_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            positions[candle_symbol]["pnl"] = pnl
-            positions[candle_symbol]["qty"] = 0
-            side = candle_to_side.get(candle_symbol)
-            if allow_reentry:
-                arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
-                start_side_buy_cooldown(side)
-            else:
-                clear_pullback_reentry(candle_symbol)
-            return order_id
-        return None
+        else:
+            order_id = None
+            exec_price = float(price)
+
+        entry_price = float(pos.get("entry_price", exec_price))
+        pnl = (exec_price - entry_price) * qty_units
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} "
+            f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
+            f"Qty={qty_units} Reason={reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            flush=True,
+        )
+        print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
+        print(f"[{ts}] [TRADE RESULT] Script=NIFTYIntra Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
+        update_daily_pnl(pnl)
+        positions[candle_symbol]["status"] = "CLOSED"
+        positions[candle_symbol]["exit_price"] = exec_price
+        positions[candle_symbol]["exit_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        positions[candle_symbol]["pnl"] = pnl
+        positions[candle_symbol]["qty"] = 0
+        side = candle_to_side.get(candle_symbol)
+        if allow_reentry:
+            arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
+            start_side_buy_cooldown(side)
+        else:
+            clear_pullback_reentry(candle_symbol)
+        return order_id
     except Exception as exc:
         exit_attempt_tracker.pop(candle_symbol, None)
         exit_reason_tracker.pop(candle_symbol, None)
@@ -1910,7 +1940,7 @@ def live_signal_loop():
                             print(
                                 f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={ce_snapshot.get('strike', 'NA')} Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
-                                f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
+                                f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(
@@ -1949,7 +1979,7 @@ def live_signal_loop():
                             print(
                                 f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={pe_snapshot.get('strike', 'NA')} Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
-                                f"OrderPlaced={'YES' if session_state == 'entry' else 'NO'}",
+                                f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(

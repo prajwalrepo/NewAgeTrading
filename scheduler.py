@@ -98,7 +98,7 @@ SCRIPTS_SCHEDULE = {
         "run_time_start": "15:15",
         "run_time_end": "15:30",
         "api_delay_seconds": 0,
-        "send_signal_emails": False,  # One final summary after close, not every signal
+        "send_signal_emails": True,  # Email every generated buy/sell signal
     },
     
     "OILMINI": {
@@ -1002,6 +1002,7 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
 def launch_script(script_name, config_key):
     """Launch a script in a separate process"""
     script_path = Path(__file__).parent / script_name
+    script_config = SCRIPTS_SCHEDULE.get(config_key, {})
     
     if not script_path.exists():
         logger.error(f"[ERROR] Script not found: {script_path}")
@@ -1018,7 +1019,6 @@ def launch_script(script_name, config_key):
         
         # Build command with dry-run flag if enabled
         cmd = [sys.executable, str(script_path)]
-        
         if CONFIG.get("dry_run"):
             cmd.append("--dry-run")
         
@@ -1048,7 +1048,6 @@ def launch_script(script_name, config_key):
         }
         
         # Start output capture in a separate thread
-        script_config = SCRIPTS_SCHEDULE.get(config_key, {})
         output_thread = threading.Thread(
             target=capture_script_output,
             args=(config_key, process, run_log_path, run_context, script_config),

@@ -78,7 +78,7 @@ CONFIG = {
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
-    "enable_actual_trade": True,
+    "enable_actual_trade": False,
     "lot_size": 10,
     "max_lots_per_trade": 20,
     "allocation_per_trade": 30000,

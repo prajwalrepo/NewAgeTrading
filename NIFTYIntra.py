@@ -77,7 +77,7 @@ CONFIG = {
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
-    "enable_actual_trade": True,
+    "enable_actual_trade": False,
     "lot_size": 65,
     "max_lots_per_trade": 16,
     "allocation_per_trade": 35000,
@@ -200,6 +200,7 @@ positions = {}  # {candle_symbol: {...}}
 trades_today_ce = 0
 trades_today_pe = 0
 daily_realized_pnl = 0.0
+daily_live_trading_halted = False
 exit_attempt_tracker = {}
 exit_reason_tracker = {}
 buy_signal_attempt_tracker = {}
@@ -550,28 +551,46 @@ def supertrend(df, atr_period, factor):
         (df["low"] - df["close"].shift()).abs(),
     ], axis=1).max(axis=1)
     atr = wilder_rma(tr, atr_period)
-    upperband = hl2 + factor * atr
-    lowerband = hl2 - factor * atr
+    basic_upperband = hl2 + factor * atr
+    basic_lowerband = hl2 - factor * atr
+    final_upperband = np.full(len(df), np.nan)
+    final_lowerband = np.full(len(df), np.nan)
     st_arr = np.full(len(df), np.nan)
-    direction = np.full(len(df), 1)
+    # Keep the callers' convention: 1 is up and -1 is down.
+    direction = np.full(len(df), -1)
+    close = df["close"].to_numpy()
+    atr_values = atr.to_numpy()
+    upper_values = basic_upperband.to_numpy()
+    lower_values = basic_lowerband.to_numpy()
 
     for i in range(len(df)):
-        if i < atr_period:
+        if np.isnan(atr_values[i]):
             continue
-        if i == atr_period:
-            if df["close"].iloc[i] > hl2.iloc[i]:
-                st_arr[i] = lowerband.iloc[i]
-                direction[i] = 1
-            else:
-                st_arr[i] = upperband.iloc[i]
-                direction[i] = -1
+        if i == 0 or np.isnan(atr_values[i - 1]):
+            final_upperband[i] = upper_values[i]
+            final_lowerband[i] = lower_values[i]
+            st_arr[i] = final_upperband[i]
+            continue
+
+        previous_close = close[i - 1]
+        final_upperband[i] = (
+            upper_values[i]
+            if upper_values[i] < final_upperband[i - 1]
+            or previous_close > final_upperband[i - 1]
+            else final_upperband[i - 1]
+        )
+        final_lowerband[i] = (
+            lower_values[i]
+            if lower_values[i] > final_lowerband[i - 1]
+            or previous_close < final_lowerband[i - 1]
+            else final_lowerband[i - 1]
+        )
+
+        if direction[i - 1] == -1:
+            direction[i] = 1 if close[i] > final_upperband[i] else -1
         else:
-            if df["close"].iloc[i - 1] > st_arr[i - 1]:
-                st_arr[i] = max(lowerband.iloc[i], st_arr[i - 1])
-                direction[i] = 1
-            else:
-                st_arr[i] = min(upperband.iloc[i], st_arr[i - 1])
-                direction[i] = -1
+            direction[i] = -1 if close[i] < final_lowerband[i] else 1
+        st_arr[i] = final_lowerband[i] if direction[i] == 1 else final_upperband[i]
     return st_arr, direction
 
 
@@ -715,16 +734,14 @@ def get_live_open_positions():
                 "product_type": pos.get("product_type", "MIS"),
                 "status": "OPEN",
                 "side": pos.get("side"),
+                "paper_only": pos.get("paper_only", True),
             }
             for symbol, pos in positions.items()
             if pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
         }
     raw = get_open_fno_positions()
-    if not raw:
-        return {}
-
     live = {}
-    for p in raw:
+    for p in raw or []:
         order_symbol = p.get("trading_symbol") or p.get("symbol")
         qty = int(p.get("quantity", 0))
         entry_price = float(p.get("average_price", p.get("net_price", 0)) or 0)
@@ -747,6 +764,21 @@ def get_live_open_positions():
             "side": side,
             "is_manual": is_manual,
         }
+    for symbol, pos in positions.items():
+        if (
+            pos.get("status") == "OPEN"
+            and pos.get("paper_only")
+            and int(pos.get("qty", 0) or 0) > 0
+        ):
+            live[symbol] = {
+                "qty": int(pos["qty"]),
+                "entry_price": float(pos.get("entry_price", 0) or 0),
+                "order_symbol": pos.get("order_symbol", symbol),
+                "product_type": pos.get("product_type", "MIS"),
+                "status": "OPEN",
+                "side": pos.get("side"),
+                "paper_only": True,
+            }
     return live
 
 
@@ -930,6 +962,17 @@ def resolve_product_constant(product_type):
 def update_daily_pnl(pnl):
     global daily_realized_pnl
     daily_realized_pnl += float(pnl)
+
+
+def live_entry_allowed_by_daily_limits():
+    max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
+    max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
+    return bool(
+        CONFIG.get("enable_actual_trade", True)
+        and not daily_live_trading_halted
+        and not (max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit)
+        and not (max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit)
+    )
 
 
 def select_atm_contract(side, index_price):
@@ -1240,6 +1283,7 @@ def check_trailing_stop_exit():
 
 
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None, is_reentry=False):
+    global daily_live_trading_halted
     try:
         if has_open_position():
             print(f"[BUY BLOCKED] {candle_symbol}: another position is already open")
@@ -1251,17 +1295,28 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
                 return None
 
-        # Check daily profit/loss limits
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
         max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
         max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
-        
-        if max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit:
-            print(f"[BLOCKED] Daily profit limit reached: {daily_realized_pnl:.2f} >= {max_profit_limit:.2f}")
-            return None
-        
-        if max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit:
-            print(f"[BLOCKED] Daily loss limit reached: {daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}")
-            return None
+        daily_limit_reason = None
+        if daily_live_trading_halted:
+            daily_limit_reason = "DAILY_LIMIT_ALREADY_REACHED"
+            print("[LIVE ENTRY BLOCKED] Daily limit was already reached; tracking paper trade")
+        elif max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit:
+            daily_limit_reason = "DAILY_PROFIT_LIMIT"
+            daily_live_trading_halted = True
+            print(
+                f"[LIVE ENTRY BLOCKED] Daily profit limit reached: "
+                f"{daily_realized_pnl:.2f} >= {max_profit_limit:.2f}; tracking paper trade"
+            )
+        elif max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit:
+            daily_limit_reason = "DAILY_LOSS_LIMIT"
+            daily_live_trading_halted = True
+            print(
+                f"[LIVE ENTRY BLOCKED] Daily loss limit reached: "
+                f"{daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}; tracking paper trade"
+            )
+        paper_only = not actual_trade_enabled or daily_limit_reason is not None
 
         side = candle_to_side.get(candle_symbol)
         if is_reentry and side_cooldown_tracker.get(side, 0) > 0:
@@ -1274,9 +1329,8 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         lot_size = int(CONFIG.get("lot_size", 1) or 1)
         max_lots = int(CONFIG.get("max_lots_per_trade", 0) or 0)
 
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
-        fno_margin = get_available_fno_margin() if actual_trade_enabled else None
-        if actual_trade_enabled and CONFIG.get("check_margin_before_order", True) and fno_margin is None:
+        fno_margin = get_available_fno_margin() if not paper_only else None
+        if not paper_only and CONFIG.get("check_margin_before_order", True) and fno_margin is None:
             print("[SKIP] Margin unavailable")
             return None
 
@@ -1307,7 +1361,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         if max_lots > 0:
             qty = min(int(qty), max_lots * lot_size)
 
-        if actual_trade_enabled:
+        if not paper_only:
             resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_BUY, growwapi.PRODUCT_MIS)
             order_id = resp.get("groww_order_id")
             status = resp.get("order_status", "UNKNOWN")
@@ -1340,6 +1394,8 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             "product_type": "MIS",
             "side": candle_to_side.get(candle_symbol),
             "strike": strike,
+            "paper_only": paper_only,
+            "paper_reason": daily_limit_reason,
             "highest_price": exec_price,
             "stop_loss_price": candle_low - loss_stop_pips,
             "trailing_sl_activated": False,
@@ -1353,7 +1409,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         clear_pullback_reentry(candle_symbol)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(
-            f"[{ts}] [{'BUY CONFIRMED' if actual_trade_enabled else 'PAPER BUY TRACKED'}] "
+            f"[{ts}] [{'BUY CONFIRMED' if not paper_only else 'PAPER BUY TRACKED'}] "
             f"{candle_symbol} Qty={int(qty)}"
             + (f" OrderID={order_id}" if order_id else "")
         )
@@ -1363,7 +1419,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
             f"Price={exec_price:.2f} Qty={int(qty)} "
             f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
-            f"OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            f"OrderPlaced={'YES' if not paper_only else 'NO'}",
             flush=True,
         )
         print_open_position_risk_levels(ts)
@@ -1399,12 +1455,14 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             return None
 
         actual_symbol = live_positions[candle_symbol].get("order_symbol", order_symbol)
-        product_constant = resolve_product_constant(live_product_type)
         exit_attempt_tracker[candle_symbol] = now_ts
         exit_reason_tracker[candle_symbol] = reason
 
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(
+            CONFIG.get("enable_actual_trade", True) and not pos.get("paper_only", False)
+        )
         if actual_trade_enabled:
+            product_constant = resolve_product_constant(live_product_type)
             resp = place_order_with_retry(actual_symbol, qty_units, growwapi.TRANSACTION_TYPE_SELL, product_constant)
             order_id = resp.get("groww_order_id")
             status = resp.get("order_status", "UNKNOWN")
@@ -1431,7 +1489,9 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         print(
             f"[TRADE SIGNAL] Script=NIFTYIntra Side=SELL Time={signal_time} "
             f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
-            f"Qty={qty_units} Reason={reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            f"Qty={qty_units} BuyAt={float(pos.get('entry_price', exec_price)):.2f} "
+            f"SellAt={exec_price:.2f} PnL={pnl:.2f} "
+            f"Reason={reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
             flush=True,
         )
         print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
@@ -1765,7 +1825,7 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
@@ -1773,6 +1833,7 @@ def live_signal_loop():
                 trades_today_ce = 0
                 trades_today_pe = 0
                 daily_realized_pnl = 0.0
+                daily_live_trading_halted = False
                 exit_attempt_tracker = {}
                 exit_reason_tracker = {}
                 buy_signal_attempt_tracker = {}
@@ -1940,7 +2001,7 @@ def live_signal_loop():
                             print(
                                 f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={ce_snapshot.get('strike', 'NA')} Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
-                                f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
+                                f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(
@@ -1979,7 +2040,7 @@ def live_signal_loop():
                             print(
                                 f"[TRADE SETUP] Script=NIFTYIntra Side=BUY Time={signal_time} Symbol={candle_symbol} "
                                 f"Strike={pe_snapshot.get('strike', 'NA')} Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
-                                f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
+                                f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )
                             track_debug_buy_signal(

@@ -573,28 +573,46 @@ def supertrend(df, atr_period, factor):
         (df["low"] - df["close"].shift()).abs(),
     ], axis=1).max(axis=1)
     atr = wilder_rma(tr, atr_period)
-    upperband = hl2 + factor * atr
-    lowerband = hl2 - factor * atr
+    basic_upperband = hl2 + factor * atr
+    basic_lowerband = hl2 - factor * atr
+    final_upperband = np.full(len(df), np.nan)
+    final_lowerband = np.full(len(df), np.nan)
     st_arr = np.full(len(df), np.nan)
-    direction = np.full(len(df), 1)
+    # Keep the callers' convention: 1 is up and -1 is down.
+    direction = np.full(len(df), -1)
+    close = df["close"].to_numpy()
+    atr_values = atr.to_numpy()
+    upper_values = basic_upperband.to_numpy()
+    lower_values = basic_lowerband.to_numpy()
 
     for i in range(len(df)):
-        if i < atr_period:
+        if np.isnan(atr_values[i]):
             continue
-        if i == atr_period:
-            if df["close"].iloc[i] > hl2.iloc[i]:
-                st_arr[i] = lowerband.iloc[i]
-                direction[i] = 1
-            else:
-                st_arr[i] = upperband.iloc[i]
-                direction[i] = -1
+        if i == 0 or np.isnan(atr_values[i - 1]):
+            final_upperband[i] = upper_values[i]
+            final_lowerband[i] = lower_values[i]
+            st_arr[i] = final_upperband[i]
+            continue
+
+        previous_close = close[i - 1]
+        final_upperband[i] = (
+            upper_values[i]
+            if upper_values[i] < final_upperband[i - 1]
+            or previous_close > final_upperband[i - 1]
+            else final_upperband[i - 1]
+        )
+        final_lowerband[i] = (
+            lower_values[i]
+            if lower_values[i] > final_lowerband[i - 1]
+            or previous_close < final_lowerband[i - 1]
+            else final_lowerband[i - 1]
+        )
+
+        if direction[i - 1] == -1:
+            direction[i] = 1 if close[i] > final_upperband[i] else -1
         else:
-            if df["close"].iloc[i - 1] > st_arr[i - 1]:
-                st_arr[i] = max(lowerband.iloc[i], st_arr[i - 1])
-                direction[i] = 1
-            else:
-                st_arr[i] = min(upperband.iloc[i], st_arr[i - 1])
-                direction[i] = -1
+            direction[i] = -1 if close[i] < final_lowerband[i] else 1
+        st_arr[i] = final_lowerband[i] if direction[i] == 1 else final_upperband[i]
     return st_arr, direction
 
 

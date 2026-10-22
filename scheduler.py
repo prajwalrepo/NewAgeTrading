@@ -300,7 +300,7 @@ def append_run_log(log_path, message):
 
 
 def cleanup_old_logs():
-    """Delete scheduler logs older than the configured retention window."""
+    """Delete files in scheduler log directories older than the retention window."""
     retention_days = int(CONFIG.get("log_retention_days", 2) or 2)
     cutoff = datetime.now() - timedelta(days=retention_days)
     deleted_count = 0
@@ -318,12 +318,15 @@ def cleanup_old_logs():
                 except FileNotFoundError:
                     continue
                 except Exception as exc:
-                    logger.error(f"[LOG] Failed to remove old log {entry.name}: {exc}")
+                    logger.error(f"[LOG] Failed to remove old file {entry.name}: {exc}")
         except FileNotFoundError:
             continue
 
     if deleted_count:
-        logger.info(f"[LOG] Deleted {deleted_count} log file(s) older than {retention_days} day(s)")
+        logger.info(
+            f"[LOG] Deleted {deleted_count} file(s) from scheduler log directories "
+            f"older than {retention_days} day(s)"
+        )
 
 
 def send_email_notification(subject, body, attachment_path=None, html_body=None):
@@ -613,7 +616,7 @@ def seconds_until_next_script_start(now=None):
 
 TRADE_SIGNAL_FIELDS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason",
-    "Lots", "LotSize", "Qty", "OrderPlaced",
+    "Lots", "LotSize", "Qty", "BuyAt", "SellAt", "PnL", "OrderPlaced",
 )
 TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
@@ -689,6 +692,9 @@ def parse_trade_signal(line):
         "Lots": fields.get("Lots", ""),
         "Lot Size": fields.get("LotSize", ""),
         "Qty": fields.get("Qty", ""),
+        "Buy Price": fields.get("BuyAt", ""),
+        "Sell Price": fields.get("SellAt", ""),
+        "PnL": fields.get("PnL", ""),
         "Order Placed": fields["OrderPlaced"].upper(),
     }
 
@@ -783,6 +789,41 @@ def _trade_report_summary(report_path):
             sells += side == "SELL"
             orders_placed += str(row[order_index] or "").upper() == "YES"
         return total, buys, sells, orders_placed
+    finally:
+        workbook.close()
+
+
+def _completed_trade_outcomes(report_path):
+    workbook = load_workbook(report_path, read_only=True, data_only=True)
+    try:
+        sheet = workbook["Trades"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        open_buys = {}
+        outcomes = []
+        for values in sheet.iter_rows(min_row=2, values_only=True):
+            side = str(values[indices["Side"]] or "").upper()
+            symbol = str(values[indices["Symbol"]] or "")
+            if side not in {"BUY", "SELL"} or not symbol:
+                continue
+            try:
+                price = float(values[indices["Price"]])
+                quantity = float(values[indices["Qty"]] or 0)
+            except (TypeError, ValueError):
+                continue
+            if side == "BUY":
+                open_buys.setdefault(symbol, []).append((price, quantity))
+                continue
+            buys = open_buys.get(symbol, [])
+            remaining_sell_quantity = quantity
+            while buys and remaining_sell_quantity > 0:
+                buy_price, buy_quantity = buys.pop(0)
+                matched_quantity = min(buy_quantity, remaining_sell_quantity)
+                outcomes.append((price - buy_price) * matched_quantity)
+                remaining_sell_quantity -= matched_quantity
+                if buy_quantity > matched_quantity:
+                    buys.insert(0, (buy_price, buy_quantity - matched_quantity))
+        return outcomes
     finally:
         workbook.close()
 
@@ -929,6 +970,19 @@ def email_daily_trade_summary(run_context, reason):
         f"Orders placed: {orders_placed}\n"
         f"Excel report: {report_path.name}"
     )
+    if str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}:
+        try:
+            outcomes = _completed_trade_outcomes(report_path)
+            wins = sum(pnl > 0 for pnl in outcomes)
+            losses = sum(pnl < 0 for pnl in outcomes)
+            body += (
+                f"\nCompleted paper/live trades: {len(outcomes)}"
+                f"\nWinning trades: {wins}"
+                f"\nLosing trades: {losses}"
+                f"\nGross realized P&L (before charges): {sum(outcomes):.2f}"
+            )
+        except Exception as exc:
+            logger.error(f"[REPORT] Failed to calculate completed outcomes for {run_context['config_key']}: {exc}")
 
     send_email_notification(subject, body, attachment_path=report_path)
 
@@ -946,6 +1000,9 @@ def email_trade_signal(config_key, trade):
         ("Symbol", symbol),
         ("Strike", trade.get("Strike") or "N/A"),
         ("Price", trade.get("Price") or "N/A"),
+        ("Buy price", trade.get("Buy Price") or "N/A"),
+        ("Sell price", trade.get("Sell Price") or "N/A"),
+        ("PnL", trade.get("PnL") or "N/A"),
         ("Quantity", trade.get("Qty") or "N/A"),
         ("Reason", trade.get("Reason") or "N/A"),
         ("Order placed", trade.get("Order Placed") or "UNKNOWN"),

@@ -329,13 +329,14 @@ def cleanup_old_logs():
         )
 
 
-def send_email_notification(subject, body, attachment_path=None, html_body=None):
+def send_email_notification(subject, body, attachment_path=None, html_body=None, recipients=None):
     """Send an email notification if SMTP is configured."""
     email_cfg = CONFIG.get("email_notifications", {})
     if not email_cfg.get("enabled", False):
         return False
 
-    recipients = email_cfg.get("to_emails") or []
+    recipients = recipients if recipients is not None else email_cfg.get("to_emails")
+    recipients = [recipients] if isinstance(recipients, str) else list(recipients or [])
     smtp_host = str(email_cfg.get("smtp_host", "") or "").strip()
     smtp_username = str(email_cfg.get("smtp_username", "") or "").strip()
     smtp_password = str(email_cfg.get("smtp_password", "") or "").strip()
@@ -621,6 +622,12 @@ TRADE_SIGNAL_FIELDS = (
 TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
 )
+PRICE_MILESTONE_FIELDS = (
+    "Script", "Time", "Symbol", "Side", "Entry", "Price", "Move", "Direction",
+)
+PRICE_MILESTONE_FIELD_PATTERN = re.compile(
+    r"(?:^|\s)(" + "|".join(PRICE_MILESTONE_FIELDS) + r")="
+)
 TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
     "Lot Size", "Qty", "Order Placed",
@@ -697,6 +704,23 @@ def parse_trade_signal(line):
         "PnL": fields.get("PnL", ""),
         "Order Placed": fields["OrderPlaced"].upper(),
     }
+
+
+def parse_price_milestone(line):
+    """Parse one structured price-milestone event from script output."""
+    if "[PRICE MILESTONE]" not in line:
+        return None
+
+    matches = list(PRICE_MILESTONE_FIELD_PATTERN.finditer(line))
+    fields = {}
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+        fields[match.group(1)] = line[start:end].strip()
+
+    if any(not fields.get(field) for field in PRICE_MILESTONE_FIELDS):
+        return None
+    return fields
 
 
 def _trade_report_path(config_key, trade_time):
@@ -950,12 +974,18 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
+    script_config = SCRIPTS_SCHEDULE.get(run_context.get("config_key"), {})
+    recipients = script_config.get("email_recipients")
     if str(run_context.get("config_key") or "").upper() == "320TRADE":
         body, html_body = _320trade_summary_email_content(
             run_context, reason, report_path, (total, buys, sells, orders_placed)
         )
         send_email_notification(
-            subject, body, attachment_path=report_path, html_body=html_body
+            subject,
+            body,
+            attachment_path=report_path,
+            html_body=html_body,
+            recipients=recipients,
         )
         return
 
@@ -984,10 +1014,12 @@ def email_daily_trade_summary(run_context, reason):
         except Exception as exc:
             logger.error(f"[REPORT] Failed to calculate completed outcomes for {run_context['config_key']}: {exc}")
 
-    send_email_notification(subject, body, attachment_path=report_path)
+    send_email_notification(
+        subject, body, attachment_path=report_path, recipients=recipients
+    )
 
 
-def email_trade_signal(config_key, trade):
+def email_trade_signal(config_key, trade, recipients=None):
     """Email one trade event with its available execution details."""
     side = trade.get("Side") or "UNKNOWN"
     symbol = trade.get("Symbol") or "UNKNOWN"
@@ -1018,7 +1050,7 @@ def email_trade_signal(config_key, trade):
         for label, value in details
     )
     html_body = f"<html><body><h2>Trade order event</h2><table>{rows}</table></body></html>"
-    send_email_notification(subject, body, html_body=html_body)
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -1034,7 +1066,37 @@ def process_trade_signal(config_key, output_line, script_config=None):
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
     if is_new and send_on_signals and script_emails_enabled:
-        email_trade_signal(config_key, trade)
+        recipients = script_config.get("email_recipients") if script_config else None
+        email_trade_signal(config_key, trade, recipients=recipients)
+
+
+def process_price_milestone(config_key, output_line, script_config=None):
+    """Email a price milestone emitted by a configured strategy."""
+    milestone = parse_price_milestone(output_line)
+    if milestone is None:
+        return
+
+    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
+    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
+    if not send_on_signals or not script_emails_enabled:
+        return
+
+    subject = (
+        f"[PRICE MOVE] {config_key} {milestone['Symbol']} "
+        f"{milestone['Move']} points ({milestone['Direction']})"
+    )
+    body = (
+        "Option price milestone\n\n"
+        f"Script: {config_key}\n"
+        f"Time: {milestone['Time']}\n"
+        f"Symbol: {milestone['Symbol']}\n"
+        f"Side: {milestone['Side']}\n"
+        f"Entry price: {milestone['Entry']}\n"
+        f"Current price: {milestone['Price']}\n"
+        f"Move from entry: {milestone['Move']} points ({milestone['Direction']})\n"
+    )
+    recipients = script_config.get("email_recipients") if script_config else None
+    send_email_notification(subject, body, recipients=recipients)
 
 
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
@@ -1052,6 +1114,7 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
                     process_trade_signal(config_key, output, script_config)
+                    process_price_milestone(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
 

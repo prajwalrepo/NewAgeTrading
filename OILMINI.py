@@ -101,7 +101,8 @@ CONFIG = {
     "expiry_day_force_exit_time": "22:00",
 
     # Risk
-    "enable_actual_trade": True,
+    # Keep entries paper-only until explicitly enabled.
+    "enable_actual_trade": False,
     "lot_size": 10,
     "max_lots_per_trade": 1,
     "allocation_per_trade": 20000,

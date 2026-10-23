@@ -68,6 +68,8 @@ CONFIG = {
     "flip_confirmation_window_candles": 1,
     "pullback_reentry_enabled": True,
     "pullback_reentry_touch_tolerance_points": 10.0,
+    "max_loss_stop_reentries_per_day": 1,
+    "loss_stop_reentry_cooldown_candles": 0,
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
@@ -212,6 +214,7 @@ pullback_reentry_tracker = {}
 last_open_position_risk_log_key = None
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 reentries_today = {"CE": 0, "PE": 0}
+loss_stop_reentries_today = {"CE": 0, "PE": 0}
 no_data_warn_tracker = {}
 contract_universe = {"CE": [], "PE": []}
 order_to_candle = {}
@@ -1049,11 +1052,18 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
     if not CONFIG.get("pullback_reentry_enabled", False):
         return
     reason_text = str(reason or "").upper()
-    if not (reason_text.startswith("MX") or reason_text.startswith("TSL")):
+    is_loss_stop = reason_text.startswith("LSL")
+    if not (reason_text.startswith("MX") or reason_text.startswith("TSL") or is_loss_stop):
         pullback_reentry_tracker.pop(candle_symbol, None)
         return
 
     side = candle_to_side.get(candle_symbol)
+    if is_loss_stop and loss_stop_reentries_today.get(side, 0) >= int(
+        CONFIG.get("max_loss_stop_reentries_per_day", 1)
+    ):
+        pullback_reentry_tracker.pop(candle_symbol, None)
+        print(f"[REENTRY BLOCKED] {side}: daily loss-stop re-entry limit reached")
+        return
     if reentries_today.get(side, 0) >= int(CONFIG.get("max_reentries_per_day", 2)):
         pullback_reentry_tracker.pop(candle_symbol, None)
         print(f"[REENTRY BLOCKED] {side}: daily re-entry limit reached")
@@ -1066,15 +1076,21 @@ def arm_pullback_reentry(candle_symbol, reason, exit_price, idx_time=None):
         "last_exit_price": float(exit_price),
         "reason": reason,
         "kind": "exit",
+        "loss_stop": is_loss_stop,
         "consumed": False,
     }
     print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [REENTRY ARMED] {candle_symbol} Reason={reason} ExitPrice={float(exit_price):.2f}")
 
 
-def start_side_buy_cooldown(side):
+def start_side_buy_cooldown(side, cooldown_candles=None):
     if side in side_cooldown_tracker:
         # Cooldowns are decremented before each candle's entry checks.
-        side_cooldown_tracker[side] = int(CONFIG.get("buy_cooldown_candles", 0) or 0) + 1
+        cooldown = (
+            CONFIG.get("buy_cooldown_candles", 0)
+            if cooldown_candles is None
+            else cooldown_candles
+        )
+        side_cooldown_tracker[side] = int(cooldown or 0) + 1
 
 
 def clear_pullback_reentry(candle_symbol):
@@ -1197,6 +1213,7 @@ def check_lsl_exit():
                 float(cur),
                 reason=f"LSL: entry candle low - {loss_stop_points} pts",
                 qty=pos.get("qty"),
+                allow_reentry=True,
             )
 
 
@@ -1404,6 +1421,9 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         }
         if is_reentry:
             reentries_today[side] = reentries_today.get(side, 0) + 1
+            reentry_candidate = pullback_reentry_tracker.get(candle_symbol) or {}
+            if reentry_candidate.get("loss_stop"):
+                loss_stop_reentries_today[side] = loss_stop_reentries_today.get(side, 0) + 1
         else:
             increment_trade_count(candle_symbol)
         clear_pullback_reentry(candle_symbol)
@@ -1505,7 +1525,13 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         side = candle_to_side.get(candle_symbol)
         if allow_reentry:
             arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
-            start_side_buy_cooldown(side)
+            is_loss_stop = str(reason or "").upper().startswith("LSL")
+            cooldown = (
+                CONFIG.get("loss_stop_reentry_cooldown_candles", 0)
+                if is_loss_stop
+                else None
+            )
+            start_side_buy_cooldown(side, cooldown)
         else:
             clear_pullback_reentry(candle_symbol)
         return order_id
@@ -1717,15 +1743,26 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
                 and open_gap_ok
             )
 
-    regular_buy = bool(signal_candle_body_ok and allow_flip and momentum_ok and open_gap_ok)
+    regular_buy = bool(
+        reentry_candidate is None
+        and signal_candle_body_ok
+        and allow_flip
+        and momentum_ok
+        and open_gap_ok
+    )
     reentry_allowed = bool(
         reentry_ok
         and side_cooldown_tracker.get(candle_to_side.get(candle_symbol), 0) == 0
         and reentries_today.get(candle_to_side.get(candle_symbol), 0)
         < int(CONFIG.get("max_reentries_per_day", 2))
+        and (
+            not reentry_candidate.get("loss_stop")
+            or loss_stop_reentries_today.get(candle_to_side.get(candle_symbol), 0)
+            < int(CONFIG.get("max_loss_stop_reentries_per_day", 1))
+        )
     )
     allow_buy = regular_buy or reentry_allowed
-    signal = "BUY" if regular_buy else ("BUY_REENTRY" if reentry_allowed else "NO_SIGNAL")
+    signal = "BUY_REENTRY" if reentry_allowed else ("BUY" if regular_buy else "NO_SIGNAL")
 
     if CONFIG.get("DEBUG") and not any(
         pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
@@ -1843,6 +1880,7 @@ def live_signal_loop():
                 pullback_reentry_tracker = {}
                 side_cooldown_tracker = {"CE": 0, "PE": 0}
                 reentries_today.update({"CE": 0, "PE": 0})
+                loss_stop_reentries_today.update({"CE": 0, "PE": 0})
                 no_data_warn_tracker = {}
                 last_reset_date = current_date
                 if not build_contract_universe():

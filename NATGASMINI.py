@@ -14,6 +14,7 @@
 # =============================================================================
 
 from datetime import datetime, time as dt_time, timedelta, timezone
+import math
 import os
 import re
 import threading
@@ -55,7 +56,7 @@ CONFIG = {
     "strike_start": 200,
     "strike_end": 420,
 
-    "candle_interval": "2M",
+    "candle_interval": "3M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -72,13 +73,14 @@ CONFIG = {
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
     "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-    "entry_window_start": "16:00",
-    "entry_window_end": "22:30",
-    "force_exit_time": "22:30",
-    "expiry_day_force_exit_time": "22:00",
+    "entry_window_start": "09:00",
+    "entry_window_end": "23:30",
+    "force_exit_time": "23:30",
+    "expiry_day_force_exit_time": "23:30",
 
     # Risk
-    "enable_actual_trade": True,
+    # Keep entries paper-only until explicitly enabled.
+    "enable_actual_trade": False,
     "lot_size": 250,
     "max_lots_per_trade": 4,
     "allocation_per_trade": 30000,
@@ -97,6 +99,9 @@ CONFIG = {
     "max_profit_booking_enabled": True,
     "max_profit_booking_points": 3.0,
     "max_profit_check_interval_sec": 60,
+    "price_milestone_emails_enabled": True,
+    "price_milestone_points": 1.0,
+    "price_milestone_poll_interval_sec": 60,
     "buy_cooldown_candles": 0,
     "exit_order_cooldown_sec": 30,
 
@@ -839,8 +844,64 @@ def wait_until_next_interval():
         next_time += timedelta(minutes=interval_min)
 
     wait_sec = (next_time - now).total_seconds()
-    if wait_sec > 0:
-        time.sleep(wait_sec)
+    poll_interval = max(
+        1.0,
+        float(CONFIG.get("price_milestone_poll_interval_sec", 10) or 10),
+    )
+    while wait_sec > 0:
+        sleep_sec = min(poll_interval, wait_sec)
+        time.sleep(sleep_sec)
+        wait_sec -= sleep_sec
+        if CONFIG.get("price_milestone_emails_enabled", True):
+            clear_loop_market_cache()
+            check_price_milestones()
+
+
+def check_price_milestones():
+    point_step = float(CONFIG.get("price_milestone_points", 1.0) or 0)
+    if point_step <= 0:
+        return
+
+    monitored_positions = dict(debug_signal_positions)
+    monitored_positions.update({
+        symbol: position
+        for symbol, position in positions.items()
+        if position.get("status") == "OPEN"
+    })
+
+    for symbol, position in monitored_positions.items():
+        entry_price = float(position.get("entry_price", 0) or 0)
+        if entry_price <= 0:
+            continue
+
+        current_price = fetch_latest_price_1m(symbol)
+        if current_price is None:
+            continue
+
+        movement = float(current_price) - entry_price
+        current_level = math.trunc(movement / point_step)
+        highest_level = int(position.get("price_milestone_highest_level", 0))
+        lowest_level = int(position.get("price_milestone_lowest_level", 0))
+        if current_level > highest_level:
+            levels = range(highest_level + 1, current_level + 1)
+            position["price_milestone_highest_level"] = current_level
+        elif current_level < lowest_level:
+            levels = range(lowest_level - 1, current_level - 1, -1)
+            position["price_milestone_lowest_level"] = current_level
+        else:
+            continue
+
+        for level in levels:
+            milestone_move = level * point_step
+            direction = "UP" if milestone_move > 0 else "DOWN"
+            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+            print(
+                f"[PRICE MILESTONE] Script=NATGASMINI Time={signal_time} "
+                f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
+                f"Move={milestone_move:+.2f} Direction={direction}",
+                flush=True,
+            )
 
 
 def get_underlying_reference_price():
@@ -1266,6 +1327,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         positions[candle_symbol]["status"] = "CLOSED"
         positions[candle_symbol]["exit_price"] = exec_price
         positions[candle_symbol]["qty"] = 0
+        debug_signal_positions.pop(candle_symbol, None)
         arm_pullback_reentry(candle_symbol, reason, exec_price)
         side = candle_to_side.get(candle_symbol)
         if side in side_cooldown_tracker:

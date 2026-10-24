@@ -56,7 +56,7 @@ CONFIG = {
     "strike_start": 200,
     "strike_end": 420,
 
-    "candle_interval": "3M",
+    "candle_interval": "2M",
     "atr_period": 10,
     "factor": 3.0,
 

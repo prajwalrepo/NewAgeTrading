@@ -25,7 +25,9 @@
     ],
     "send_on_signals": true,
     "send_daily_summary_on_stop": true,
-    "notes": "Signal emails contain trade details without workbook attachments. Daily summary emails include the Excel workbook. 320trade sends its CE/PE result table after both legs close."
+    "send_monthly_summary_on_month_end": true,
+    "monthly_summary_recipients": ["gencinvestor@gmail.com"],
+    "notes": "Signal emails contain trade details without workbook attachments. Daily summary emails include a trade table and the Excel workbook. Month-end summary emails contain the full monthly trade table without an attachment."
   },
 
   "scripts": {

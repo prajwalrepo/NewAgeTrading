@@ -20,6 +20,7 @@ import time
 import smtplib
 import mimetypes
 import re
+import calendar
 import hashlib
 import html
 import tempfile
@@ -38,6 +39,7 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 RUN_LOG_DIR = LOG_DIR / "script_runs"
 RUN_LOG_DIR.mkdir(exist_ok=True)
+MONTHLY_REPORT_DIR = LOG_DIR / "monthly_trade_reports"
 CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -164,6 +166,8 @@ CONFIG = {
         "to_emails": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
+        "send_monthly_summary_on_month_end": True,
+        "monthly_summary_recipients": [],
     },
 }
 
@@ -632,12 +636,18 @@ TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
     "Lot Size", "Qty", "Order Placed",
 )
+MONTHLY_REPORT_SHEETS = {
+    "NIFTYINTRA": "NIFTY",
+    "SENSEXINTRA": "SENSEX",
+    "NATGASMINI": "GAS",
+    "OILMINI": "OIL",
+}
 TRADE_REPORT_LOCK = threading.Lock()
 
 
-def _initialize_trade_report_sheet(workbook, sheet=None):
+def _initialize_trade_report_sheet(workbook, sheet=None, title="Trades"):
     sheet = sheet or workbook.active
-    sheet.title = "Trades"
+    sheet.title = title
     sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
     for cell in sheet[1]:
         cell.font = Font(bold=True)
@@ -646,6 +656,20 @@ def _initialize_trade_report_sheet(workbook, sheet=None):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
     sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
     return sheet
+
+
+def _trade_report_values(trade):
+    row = []
+    for column in TRADE_REPORT_COLUMNS:
+        value = trade[column]
+        if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
+            try:
+                number = float(value)
+                value = int(number) if number.is_integer() else number
+            except ValueError:
+                pass
+        row.append(value)
+    return row
 
 
 def _save_trade_report(workbook, report_path):
@@ -761,17 +785,67 @@ def append_trade_to_report(config_key, trade):
             ):
                 return report_path, False
 
-            row = []
-            for column in TRADE_REPORT_COLUMNS:
-                value = trade[column]
-                if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
-                    try:
-                        number = float(value)
-                        value = int(number) if number.is_integer() else number
-                    except ValueError:
-                        pass
-                row.append(value)
-            sheet.append(tuple(row) + (event_key,))
+            sheet.append(tuple(_trade_report_values(trade)) + (event_key,))
+            sheet.auto_filter.ref = sheet.dimensions
+            _save_trade_report(workbook, report_path)
+        finally:
+            workbook.close()
+    return report_path, True
+
+
+def _monthly_trade_report_path(trade_time):
+    try:
+        trade_date = datetime.fromisoformat(trade_time.replace("Z", "+00:00"))
+    except ValueError:
+        trade_date = get_ist_time()
+    return MONTHLY_REPORT_DIR / f"trades_{trade_date:%Y%m}.xlsx"
+
+
+def _create_monthly_trade_report():
+    workbook = Workbook()
+    for index, sheet_name in enumerate(MONTHLY_REPORT_SHEETS.values()):
+        sheet = workbook.active if index == 0 else workbook.create_sheet()
+        _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
+    return workbook
+
+
+def append_trade_to_monthly_report(config_key, trade):
+    """Append a unique market signal to the persistent workbook for its month."""
+    sheet_name = MONTHLY_REPORT_SHEETS.get(str(config_key).upper())
+    if sheet_name is None:
+        return None, False
+
+    event_data = json.dumps(trade, sort_keys=True, separators=(",", ":"))
+    event_key = hashlib.sha256(event_data.encode("utf-8")).hexdigest()
+    report_path = _monthly_trade_report_path(trade["Time"])
+    with TRADE_REPORT_LOCK:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = load_workbook(report_path) if report_path.exists() else _create_monthly_trade_report()
+        try:
+            if sheet_name not in workbook.sheetnames:
+                sheet = _initialize_trade_report_sheet(
+                    workbook, workbook.create_sheet(), title=sheet_name
+                )
+            else:
+                sheet = workbook[sheet_name]
+                headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
+                if not any(headers):
+                    _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
+                elif headers[:len(TRADE_REPORT_COLUMNS)] != TRADE_REPORT_COLUMNS:
+                    raise ValueError(f"Unexpected trade report columns in {report_path}")
+                elif len(headers) < len(TRADE_REPORT_COLUMNS) + 1:
+                    key_cell = sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1, value="Event Key")
+                    key_cell.font = Font(bold=True)
+                    sheet.column_dimensions[key_cell.column_letter].hidden = True
+
+            key_column = len(TRADE_REPORT_COLUMNS) + 1
+            if any(
+                row[0].value == event_key
+                for row in sheet.iter_rows(min_row=2, min_col=key_column, max_col=key_column)
+            ):
+                return report_path, False
+
+            sheet.append(tuple(_trade_report_values(trade)) + (event_key,))
             sheet.auto_filter.ref = sheet.dimensions
             _save_trade_report(workbook, report_path)
         finally:
@@ -815,6 +889,62 @@ def _trade_report_summary(report_path):
         return total, buys, sells, orders_placed
     finally:
         workbook.close()
+
+
+def _trade_report_rows(report_path, sheet_name="Trades"):
+    workbook = load_workbook(report_path, read_only=True, data_only=True)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            return []
+        sheet = workbook[sheet_name]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        return [
+            {name: row[indices[name]] for name in TRADE_REPORT_COLUMNS}
+            for row in sheet.iter_rows(min_row=2, values_only=True)
+            if any(value is not None for value in row[:len(TRADE_REPORT_COLUMNS)])
+        ]
+    finally:
+        workbook.close()
+
+
+def _trade_rows_html(rows):
+    header_cells = "".join(f"<th>{html.escape(column)}</th>" for column in TRADE_REPORT_COLUMNS)
+    if not rows:
+        return "<p>No trade signals were recorded.</p>"
+    table_rows = "".join(
+        "<tr>"
+        + "".join(
+            f"<td>{html.escape(str(row.get(column) if row.get(column) is not None else ''))}</td>"
+            for column in TRADE_REPORT_COLUMNS
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return (
+        "<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
+        + header_cells
+        + "</tr></thead><tbody>"
+        + table_rows
+        + "</tbody></table>"
+    )
+
+
+def _trade_rows_text(rows):
+    if not rows:
+        return "No trade signals were recorded."
+    return "\n".join(
+        [
+            " | ".join(TRADE_REPORT_COLUMNS),
+            *(
+                " | ".join(
+                    str(row.get(column) if row.get(column) is not None else "")
+                    for column in TRADE_REPORT_COLUMNS
+                )
+                for row in rows
+            ),
+        ]
+    )
 
 
 def _completed_trade_outcomes(report_path):
@@ -1000,6 +1130,12 @@ def email_daily_trade_summary(run_context, reason):
         f"Orders placed: {orders_placed}\n"
         f"Excel report: {report_path.name}"
     )
+    html_sections = [
+        f"<html><body><h2>{html.escape(subject)}</h2>"
+        f"<p>{html.escape(body).replace(chr(10), '<br>')}</p>"
+        "<h3>Trade details</h3>"
+        + _trade_rows_html(_trade_report_rows(report_path))
+    ]
     if str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}:
         try:
             outcomes = _completed_trade_outcomes(report_path)
@@ -1011,12 +1147,123 @@ def email_daily_trade_summary(run_context, reason):
                 f"\nLosing trades: {losses}"
                 f"\nGross realized P&L (before charges): {sum(outcomes):.2f}"
             )
+            html_sections.append(
+                f"<p>Completed paper/live trades: {len(outcomes)}<br>"
+                f"Winning trades: {wins}<br>Losing trades: {losses}<br>"
+                f"Gross realized P&amp;L (before charges): {sum(outcomes):.2f}</p>"
+            )
         except Exception as exc:
             logger.error(f"[REPORT] Failed to calculate completed outcomes for {run_context['config_key']}: {exc}")
 
+    html_sections.append("</body></html>")
     send_email_notification(
-        subject, body, attachment_path=report_path, recipients=recipients
+        subject,
+        body + "\n\nTrade details:\n" + _trade_rows_text(_trade_report_rows(report_path)),
+        attachment_path=report_path,
+        html_body="".join(html_sections),
+        recipients=recipients,
     )
+
+
+def _monthly_summary_due(now, running_processes):
+    if now.day != calendar.monthrange(now.year, now.month)[1]:
+        return False
+
+    market_configs = [
+        script_config
+        for config_key, script_config in SCRIPTS_SCHEDULE.items()
+        if config_key.upper() in MONTHLY_REPORT_SHEETS and script_config.get("enabled", True)
+    ]
+    if not market_configs:
+        return False
+    latest_end_time = max(
+        parse_time(script_config.get("run_time_end", "23:59"))
+        for script_config in market_configs
+    )
+    if now.time().replace(tzinfo=None) <= latest_end_time:
+        return False
+
+    return not any(
+        config_key.upper() in MONTHLY_REPORT_SHEETS
+        and run_context["process"].poll() is None
+        for config_key, run_context in running_processes.items()
+    )
+
+
+def email_monthly_trade_summary(now=None, running_processes=None):
+    """Email the full month of market signals after the final configured run."""
+    email_cfg = CONFIG.get("email_notifications", {})
+    if (
+        not email_cfg.get("enabled", False)
+        or not email_cfg.get("send_monthly_summary_on_month_end", True)
+    ):
+        return
+
+    now = now or get_ist_time()
+    running_processes = running_processes or {}
+    if not _monthly_summary_due(now, running_processes):
+        return
+
+    month_key = now.strftime("%Y%m")
+    MONTHLY_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    marker_path = MONTHLY_REPORT_DIR / f"summary_sent_{month_key}.txt"
+    if marker_path.exists():
+        return
+
+    report_path = MONTHLY_REPORT_DIR / f"trades_{month_key}.xlsx"
+    if not report_path.exists():
+        workbook = _create_monthly_trade_report()
+        try:
+            _save_trade_report(workbook, report_path)
+        finally:
+            workbook.close()
+
+    try:
+        market_rows = {
+            sheet_name: _trade_report_rows(report_path, sheet_name)
+            for sheet_name in MONTHLY_REPORT_SHEETS.values()
+        }
+    except Exception as exc:
+        logger.error(f"[REPORT] Failed to prepare monthly summary for {month_key}: {exc}")
+        return
+
+    all_rows = [row for rows in market_rows.values() for row in rows]
+    buys = sum(str(row.get("Side") or "").upper() == "BUY" for row in all_rows)
+    sells = sum(str(row.get("Side") or "").upper() == "SELL" for row in all_rows)
+    orders_placed = sum(
+        str(row.get("Order Placed") or "").upper() == "YES" for row in all_rows
+    )
+    subject = f"[MONTHLY SUMMARY] {now:%B %Y}"
+    month_label = now.strftime("%B %Y")
+    body = (
+        f"Monthly trade details for {month_label}\n"
+        f"Total signals: {len(all_rows)} | Buy signals: {buys} | "
+        f"Sell signals: {sells} | Orders placed: {orders_placed}\n"
+        "The table rows below include both generated signals and whether an order was placed.\n"
+    )
+    html_sections = [
+        f"<html><body><h2>Monthly trade details - {html.escape(month_label)}</h2>"
+        f"<p>Total signals: {len(all_rows)} | Buy signals: {buys} | "
+        f"Sell signals: {sells} | Orders placed: {orders_placed}</p>"
+        "<p>Includes generated signals and whether an order was placed.</p>"
+    ]
+    for sheet_name, rows in market_rows.items():
+        body += f"\n{sheet_name}\n{_trade_rows_text(rows)}\n"
+        html_sections.append(
+            f"<h3>{html.escape(sheet_name)}</h3>{_trade_rows_html(rows)}"
+        )
+    html_sections.append("</body></html>")
+
+    if send_email_notification(
+        subject,
+        body,
+        html_body="".join(html_sections),
+        recipients=email_cfg.get("monthly_summary_recipients"),
+    ):
+        try:
+            marker_path.write_text(now.isoformat(), encoding="utf-8")
+        except OSError as exc:
+            logger.error(f"[REPORT] Failed to mark monthly summary {month_key} as sent: {exc}")
 
 
 def email_trade_signal(config_key, trade, recipients=None):
@@ -1063,6 +1310,10 @@ def process_trade_signal(config_key, output_line, script_config=None):
         _, is_new = append_trade_to_report(config_key, trade)
     except Exception as exc:
         logger.error(f"[REPORT] Failed to record trade signal for {config_key}: {exc}")
+    try:
+        append_trade_to_monthly_report(config_key, trade)
+    except Exception as exc:
+        logger.error(f"[REPORT] Failed to record monthly trade signal for {config_key}: {exc}")
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
     if is_new and send_on_signals and script_emails_enabled:
@@ -1267,6 +1518,7 @@ def scheduler_loop():
                     blocked_failures.pop(config_key, None)
             
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
+            email_monthly_trade_summary(now=get_ist_time(), running_processes=running_processes)
             
             # Sleep before next check
             sleep_seconds = float(CONFIG["check_interval_seconds"])

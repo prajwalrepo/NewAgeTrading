@@ -5,7 +5,8 @@
 # existing NaturalGas scripts, but simplified and organized for intraday use.
 #
 # Flow:
-# 1) Resolve the nearest upcoming expiry from the configured array.
+# 1) Resolve the nearest upcoming option expiry, then pair it with the next
+#    configured futures expiry on or after that option expiry.
 # 2) Select ATM strike using a live/near-live underlying NATGASMINI price.
 # 3) Fetch CE/PE candle data for the selected expiry.
 # 4) Run Supertrend on the option candles.
@@ -440,6 +441,19 @@ def _select_nearest_expiry(entries, now_dt=None):
     return min(pool, key=lambda e: abs((e["expiry_dt"].date() - today).days))
 
 
+def _select_future_for_option_expiry(future_entries, option_entry):
+    if not option_entry:
+        return None
+    option_expiry = option_entry["expiry_dt"].date()
+    eligible_futures = [
+        entry for entry in future_entries
+        if entry["expiry_dt"].date() >= option_expiry
+    ]
+    if not eligible_futures:
+        return None
+    return min(eligible_futures, key=lambda entry: entry["expiry_dt"].date())
+
+
 def build_candle_symbol(expiry_fs, strike, side):
     return f"{str(CONFIG['commodity_root']).upper()}-{expiry_fs}-{int(strike)}-{str(side).upper()}"
 
@@ -674,9 +688,8 @@ def build_contract_universe():
     candle_to_side = {}
     order_expiry_to_candle_expiry = {}
 
-    # Prefer the configured expiry arrays and resolve the nearest upcoming expiry,
-    # matching the NIFTYFNOInatra pattern. Only fall back to exact raw symbol arrays
-    # if no expiry list is supplied.
+    # Prefer configured expiry arrays; pair the nearest upcoming option expiry with
+    # the next configured futures expiry. Fall back to raw symbol arrays if needed.
     future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
     if not future_entries and CONFIG.get("future_symbols"):
         future_entries = _normalize_symbol_array(CONFIG["future_symbols"], "future")
@@ -685,14 +698,18 @@ def build_contract_universe():
     if not option_entries and CONFIG.get("option_symbols"):
         option_entries = _normalize_symbol_array(CONFIG["option_symbols"], "option")
 
-    future_selected = _select_nearest_expiry(future_entries) if future_entries else None
-    if future_selected is None:
-        print("[ERROR] No valid NATGASMINI futures expiry configured")
-        return False
-
     option_selected = _select_nearest_expiry(option_entries) if option_entries else None
     if option_selected is None:
         print("[ERROR] No valid NATGASMINI options expiry configured")
+        return False
+
+    future_selected = _select_future_for_option_expiry(future_entries, option_selected)
+    if future_selected is None:
+        option_expiry = option_selected["expiry_dt"].strftime("%Y-%m-%d")
+        print(
+            f"[ERROR] No configured NATGASMINI future expires on or after "
+            f"selected option expiry {option_expiry}"
+        )
         return False
 
     future_expiry_fs = future_selected.get("candle_expiry", future_selected.get("expiry_token"))
@@ -700,8 +717,13 @@ def build_contract_universe():
     expiry_fs = option_selected.get("candle_expiry", option_selected.get("expiry_token"))
     order_expiry = option_selected.get("order_expiry", option_selected.get("expiry_token"))
 
+    active_future_reference["entry"] = future_selected
+    active_future_reference["symbol"] = build_future_candle_symbol(future_expiry_fs)
     order_expiry_to_candle_expiry[order_expiry.upper()] = expiry_fs
-    print(f"[FUTURE] Selected NATGASMINI future: candle={future_expiry_fs}, order={future_order_expiry}")
+    print(
+        f"[FUTURE] Selected NATGASMINI future: candle={future_expiry_fs}, "
+        f"order={future_order_expiry} (paired with option expiry={expiry_fs})"
+    )
     print(f"[EXPIRY] Selected NATGASMINI options: candle={expiry_fs}, order={order_expiry}")
 
     strikes = list(range(int(CONFIG["strike_start"]), int(CONFIG["strike_end"]) + int(CONFIG["strike_step"]), int(CONFIG["strike_step"])))
@@ -905,37 +927,15 @@ def check_price_milestones():
 
 
 def get_underlying_reference_price():
-    future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-    if not future_entries:
-        active_future_reference["entry"] = None
+    selected_entry = active_future_reference.get("entry")
+    if not isinstance(selected_entry, dict):
         active_future_reference["symbol"] = None
         return None, None
 
-    active_entry = active_future_reference.get("entry")
-    future_selected = _select_nearest_expiry(future_entries)
-    candidates = []
-
-    for entry in (active_entry, future_selected, *future_entries):
-        if not isinstance(entry, dict):
-            continue
-        candle_expiry = entry.get("candle_expiry")
-        if not candle_expiry:
-            continue
-        if any(existing.get("candle_expiry") == candle_expiry for existing in candidates):
-            continue
-        candidates.append(entry)
-
-    for entry in candidates:
-        future_symbol = build_future_candle_symbol(entry["candle_expiry"])
-        price = fetch_latest_price_1m(future_symbol)
-        if price is not None:
-            active_future_reference["entry"] = entry
-            active_future_reference["symbol"] = future_symbol
-            return price, future_symbol
-
-    active_future_reference["entry"] = future_selected
-    active_future_reference["symbol"] = build_future_candle_symbol(future_selected["candle_expiry"]) if future_selected else None
-    return None, active_future_reference["symbol"]
+    future_symbol = build_future_candle_symbol(selected_entry["candle_expiry"])
+    active_future_reference["symbol"] = future_symbol
+    price = fetch_latest_price_1m(future_symbol)
+    return price, future_symbol
 
 
 def option_has_flip_buy_signal(candle_symbol, idx_time):

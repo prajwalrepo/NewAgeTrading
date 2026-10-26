@@ -51,7 +51,7 @@ CONFIG = {
 
     # Order sizing.
     # Fallback lot size used only if instrument lot size is not configured.
-    "lot_size": 2,
+    "lot_size": 1,
     # Keep True to place real broker orders.
     "enable_actual_trade": True,
     "check_margin_before_order": True,
@@ -78,7 +78,7 @@ CONFIG = {
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 150.0,
         "stop_loss_percent": 40.0,
-        "max_lots_per_trade": 2,
+        "max_lots_per_trade": 1,
     },
     "sensex": {
         "root": "SENSEX",
@@ -96,7 +96,7 @@ CONFIG = {
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 200.0,
         "stop_loss_percent": 50,
-        "max_lots_per_trade": 5,
+        "max_lots_per_trade": 1,
     },
 }
 

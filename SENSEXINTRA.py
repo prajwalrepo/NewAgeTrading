@@ -82,11 +82,11 @@ CONFIG = {
     # Lot sizing is single-sized across CE/PE.
     "enable_actual_trade": False,
     "lot_size": 10,
-    "max_lots_per_trade": 20,
-    "allocation_per_trade": 30000,
+    "max_lots_per_trade": 10,
+    "allocation_per_trade": 35000,
     "check_margin_before_order": True,
-    "max_trades_per_day_ce": 4,
-    "max_trades_per_day_pe": 4,
+    "max_trades_per_day_ce": 5,
+    "max_trades_per_day_pe": 5,
     "max_reentries_per_day": 2,
     "max_profit_per_day": 15000,
     "max_loss_per_day": 3000,
@@ -95,8 +95,8 @@ CONFIG = {
     "special_exit_enabled": True,
     # Max profit booking (configurable points)
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 150,
-    "loss_stop_points": 5,
+    "max_profit_booking_points": 300,
+    "loss_stop_points": 3,
 
     # Trailing stop-loss (configurable points)
     # trailing_stop_loss_points = gap kept behind the highest price
@@ -105,7 +105,7 @@ CONFIG = {
     "trailing_stop_loss_points": 15,
     "high_premium_trailing_stop_threshold": 350,
     "high_premium_trailing_stop_loss_points": 10,
-    "trailing_stop_trigger_points": 20,
+    "trailing_stop_trigger_points": 15,
     "max_profit_check_interval_sec": 60,
     "buy_cooldown_candles": 3,
     "exit_order_cooldown_sec": 30,
@@ -1177,11 +1177,19 @@ def print_open_position_risk_levels(idx_time):
 
     for symbol, pos in open_positions:
         entry_price = float(pos.get("entry_price", 0) or 0)
+        strike = pos.get("strike", "NA")
         lsl = float(pos.get("stop_loss_price", 0) or 0)
         mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
         tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
-        tsl_state = "ACTIVE" if pos.get("trailing_sl_activated", False) else "INACTIVE"
-        print(f"[{idx_time}] [POSITION RISK] {symbol} | LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})")
+        tsl_state = (
+            "DISABLED" if not CONFIG.get("trailing_stop_enabled", True)
+            else "ACTIVE" if pos.get("trailing_sl_activated", False)
+            else "INACTIVE"
+        )
+        print(
+            f"[{idx_time}] [POSITION RISK] {symbol} | Strike={strike} "
+            f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
+        )
 
     last_open_position_risk_log_key = log_key
 
@@ -1430,7 +1438,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(
             f"[{ts}] [{'BUY CONFIRMED' if not paper_only else 'PAPER BUY TRACKED'}] "
-            f"{candle_symbol} Qty={int(qty)}"
+            f"{candle_symbol} Strike={strike if strike is not None else 'NA'} Qty={int(qty)}"
             + (f" OrderID={order_id}" if order_id else "")
         )
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1590,12 +1598,20 @@ def track_debug_buy_signal(candle_symbol, order_symbol, price, idx_time, entry_c
     }
     debug_last_max_check_at[candle_symbol] = None
     clear_pullback_reentry(candle_symbol)
-    print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {candle_symbol} OrderSymbol={order_symbol} Price={float(price):.2f} Side={side} TSLGap={trail_gap:g}pts")
+    print(
+        f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {candle_symbol} "
+        f"OrderSymbol={order_symbol} Strike={strike if strike is not None else 'NA'} "
+        f"Price={float(price):.2f} Side={side} TSLGap={trail_gap:g}pts"
+    )
     loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
+    lsl = entry_low - loss_stop_pips
+    mx = float(price) + float(CONFIG.get("max_profit_booking_points", 0) or 0)
+    tsl = float(price) - trail_gap
+    tsl_state = "INACTIVE" if CONFIG.get("trailing_stop_enabled", True) else "DISABLED"
     print(
         f"[{idx_time}] [DEBUG SL LEVELS] {candle_symbol} "
-        f"| LSL@{(entry_low - loss_stop_pips):.2f} "
-        f"| MX@{(float(price) + float(CONFIG.get('max_profit_booking_points', 0) or 0)):.2f}"
+        f"| Strike={strike if strike is not None else 'NA'} "
+        f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
     )
 
 

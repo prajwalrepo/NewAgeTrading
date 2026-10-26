@@ -89,7 +89,7 @@ CONFIG = {
     "max_trades_per_day_pe": 5,
     "max_reentries_per_day": 2,
     "max_profit_per_day": 15000,
-    "max_loss_per_day": 3000,
+    "max_loss_per_day": 5000,
 
     # Risk / exits
     "special_exit_enabled": True,

@@ -33,26 +33,26 @@
   "scripts": {
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
-      "description": "NIFTY Intraday FNO Strategy (9:13 AM to 3:30 PM)",
+      "description": "NIFTY Intraday FNO Strategy with 3:15 PM IST square-off",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
       "run_time_start": "09:13",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Order placement is configured inside NIFTYIntra.py. Immediate mail for every generated signal."
+      "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
     },
 
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
-      "description": "SENSEX Intraday FNO Strategy (Bombay Stock Exchange)",
+      "description": "SENSEX Intraday FNO Strategy with 3:15 PM IST square-off",
       "enabled": true,
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:12",
       "run_time_end": "15:30",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Order placement is configured inside SENSEXINTRA.py. Immediate mail for every generated signal."
+      "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
     },
 
     "320trade": {

@@ -804,7 +804,8 @@ def _monthly_trade_report_path(trade_time):
         trade_date = datetime.fromisoformat(trade_time.replace("Z", "+00:00"))
     except ValueError:
         trade_date = get_ist_time()
-    return MONTHLY_REPORT_DIR / f"trades_{trade_date:%Y%m}.xlsx"
+    month_label = trade_date.strftime("%b").upper()
+    return MONTHLY_REPORT_DIR / f"NIFTY_{month_label}.xlsx"
 
 
 def _create_monthly_trade_report():
@@ -1160,10 +1161,11 @@ def email_daily_trade_summary(run_context, reason):
             logger.error(f"[REPORT] Failed to calculate completed outcomes for {run_context['config_key']}: {exc}")
 
     html_sections.append("</body></html>")
+    attachment_path = None if str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"} else report_path
     send_email_notification(
         subject,
         body + "\n\nTrade details:\n" + _trade_rows_text(_trade_report_rows(report_path)),
-        attachment_path=report_path,
+        attachment_path=attachment_path,
         html_body="".join(html_sections),
         recipients=recipients,
     )
@@ -1214,7 +1216,7 @@ def email_monthly_trade_summary(now=None, running_processes=None):
     if marker_path.exists():
         return
 
-    report_path = MONTHLY_REPORT_DIR / f"trades_{month_key}.xlsx"
+    report_path = MONTHLY_REPORT_DIR / f"NIFTY_{datetime.strptime(month_key, '%Y%m').strftime('%b').upper()}.xlsx"
     if not report_path.exists():
         workbook = _create_monthly_trade_report()
         try:

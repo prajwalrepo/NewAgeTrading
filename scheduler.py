@@ -71,7 +71,7 @@ class DayOfWeek(Enum):
 SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
-        "description": "NIFTY Intraday FNO Strategy",
+        "description": "NIFTY Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
@@ -82,7 +82,7 @@ SCRIPTS_SCHEDULE = {
     
     "SENSEXINTRA": {
         "script_name": "SENSEXINTRA.py",
-        "description": "SENSEX Intraday FNO Strategy",
+        "description": "SENSEX Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
         "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
         "run_days_of_month": None,  # Every day of month
@@ -451,6 +451,12 @@ def classify_process_exit(run_context, exit_code):
 
     recent_output = [line.strip() for line in run_context.get("recent_output", []) if str(line).strip()]
     normalized_output = "\n".join(recent_output[-10:]).lower()
+    if (
+        str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}
+        and exit_code == 0
+        and "[strategy complete] all open positions closed at 15:15 ist" in normalized_output
+    ):
+        return "strategy_complete", "Intraday positions closed at 15:15 IST", False
 
     if (
         "authentication failed" in normalized_output
@@ -1012,10 +1018,10 @@ def _320trade_outcome_rows(report_path):
             outcomes.append({
                 "symbol": symbol,
                 "strike": buy["Strike"] or sell["Strike"] or "",
-                "buy_time": buy["Time"] or "",
                 "buy_price": buy_price,
                 "sell_time": sell["Time"] or "",
                 "sell_price": sell_price,
+                "quantity": quantity,
                 "pnl": (sell_price - buy_price) * quantity,
                 "order_placed": (
                     str(buy["Order Placed"] or "").upper() == "YES"
@@ -1042,30 +1048,29 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
         return "\n".join(text), None
 
     columns = (
-        "Option", "Strike", "Buy time", "Buy price", "Sell time", "Sell price",
-        "Gross P&L (before charges)", "Mode",
+        "Strike", "Buy Price", "Sell Price", "Sell Time", "Quantity", "PnL",
+        "Order Placed",
     )
     text.append("")
     text.append(" | ".join(columns))
     text.append(" | ".join("-" * len(column) for column in columns))
     for row in outcomes:
         text.append(
-            f"{row['symbol']} | {row['strike']} | {row['buy_time']} | {row['buy_price']:.2f} | "
-            f"{row['sell_time']} | {row['sell_price']:.2f} | {row['pnl']:.2f} | "
-            f"{'Live' if row['order_placed'] else 'Paper/reference'}"
+            f"{row['strike']} | {row['buy_price']:.2f} | {row['sell_price']:.2f} | "
+            f"{row['sell_time']} | {row['quantity']:g} | {row['pnl']:.2f} | "
+            f"{'YES' if row['order_placed'] else 'NO'}"
         )
     text.append(f"Total gross P&L (before charges): {sum(row['pnl'] for row in outcomes):.2f}")
 
     table_rows = "".join(
         "<tr>"
-        f"<td>{html.escape(str(row['symbol']))}</td>"
         f"<td>{html.escape(str(row['strike']))}</td>"
-        f"<td>{html.escape(str(row['buy_time']))}</td>"
         f"<td>{row['buy_price']:.2f}</td>"
-        f"<td>{html.escape(str(row['sell_time']))}</td>"
         f"<td>{row['sell_price']:.2f}</td>"
+        f"<td>{html.escape(str(row['sell_time']))}</td>"
+        f"<td>{row['quantity']:g}</td>"
         f"<td>{row['pnl']:.2f}</td>"
-        f"<td>{'Live' if row['order_placed'] else 'Paper/reference'}</td>"
+        f"<td>{'YES' if row['order_placed'] else 'NO'}</td>"
         "</tr>"
         for row in outcomes
     )
@@ -1113,7 +1118,6 @@ def email_daily_trade_summary(run_context, reason):
         send_email_notification(
             subject,
             body,
-            attachment_path=report_path,
             html_body=html_body,
             recipients=recipients,
         )

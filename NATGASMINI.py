@@ -1138,10 +1138,12 @@ def verify_order_execution(order_id, symbol, fallback_price=None):
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry_candle_low=None, strike=None):
     try:
         side = candle_to_side.get(candle_symbol, "CE")
-        allowed, cnt, max_allowed = check_trade_limit(side)
-        if not allowed:
-            print(f"[BLOCKED] Trade limit {side}: {cnt}/{max_allowed}")
-            return None
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        if actual_trade_enabled:
+            allowed, cnt, max_allowed = check_trade_limit(side)
+            if not allowed:
+                print(f"[BLOCKED] Trade limit {side}: {cnt}/{max_allowed}")
+                return None
 
         # Check daily profit/loss limits
         max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
@@ -1160,7 +1162,6 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
 
         lot_size = int(CONFIG.get("lot_size", 1) or 1)
         max_lots = int(CONFIG.get("max_lots_per_trade", 0) or 0)
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
         margin = get_available_margin() if actual_trade_enabled else None
         if actual_trade_enabled and CONFIG.get("check_margin_before_order", True) and margin is None:
             print("[SKIP] Margin unavailable")

@@ -75,7 +75,7 @@ CONFIG = {
     "trading_weekdays": ["MONDAY", "TUESDAY", "FRIDAY"],
     "entry_window_start": "09:13",
     "entry_window_end": "15:10",
-    "force_exit_time": "15:19",
+    "force_exit_time": "15:15",
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
@@ -715,7 +715,7 @@ def get_open_fno_positions():
         return []
     except Exception as exc:
         print(f"[WARNING] Error fetching positions: {type(exc).__name__}: {exc}")
-        return []
+        return None
 
 
 def infer_side_from_symbol(symbol):
@@ -743,6 +743,8 @@ def get_live_open_positions():
             if pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
         }
     raw = get_open_fno_positions()
+    if raw is None:
+        raise RuntimeError("Unable to verify open F&O positions")
     live = {}
     for p in raw or []:
         order_symbol = p.get("trading_symbol") or p.get("symbol")
@@ -1176,7 +1178,20 @@ def print_open_position_risk_levels(idx_time):
 
     for symbol, pos in open_positions:
         entry_price = float(pos.get("entry_price", 0) or 0)
-        strike = pos.get("strike", "NA")
+        qty = int(pos.get("qty", 0) or 0)
+        current_price = _get_cached_price(symbol)
+        if current_price is None:
+            current_price = fetch_latest_price_1m(symbol)
+        current_price_text = (
+            f"{float(current_price):.2f}"
+            if current_price is not None
+            else "UNAVAILABLE"
+        )
+        pnl_text = (
+            f"{(float(current_price) - entry_price) * qty:.2f}"
+            if current_price is not None and entry_price > 0 and qty > 0
+            else "UNAVAILABLE"
+        )
         lsl = float(pos.get("stop_loss_price", 0) or 0)
         mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
         tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
@@ -1186,7 +1201,8 @@ def print_open_position_risk_levels(idx_time):
             else "INACTIVE"
         )
         print(
-            f"[{idx_time}] [POSITION RISK] {symbol} | Strike={strike} "
+            f"[{idx_time}] [POSITION RISK] {symbol} | OptionPrice={current_price_text} "
+            f"UnrealizedPnL={pnl_text} "
             f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
         )
 
@@ -1436,9 +1452,18 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             increment_trade_count(candle_symbol)
         clear_pullback_reentry(candle_symbol)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_price = _get_cached_price(candle_symbol)
+        if current_price is None:
+            current_price = fetch_latest_price_1m(candle_symbol)
+        unrealized_pnl = (
+            f"{(float(current_price) - exec_price) * int(qty):.2f}"
+            if current_price is not None
+            else "UNAVAILABLE"
+        )
         print(
             f"[{ts}] [{'BUY CONFIRMED' if not paper_only else 'PAPER BUY TRACKED'}] "
-            f"{candle_symbol} Strike={strike if strike is not None else 'NA'} Qty={int(qty)}"
+            f"{candle_symbol} OptionPrice={exec_price:.2f} "
+            f"UnrealizedPnL={unrealized_pnl} Qty={int(qty)}"
             + (f" OrderID={order_id}" if order_id else "")
         )
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1864,6 +1889,16 @@ def wait_until_next_interval():
         next_time += timedelta(hours=1)
 
     wait_sec = (next_time - now).total_seconds()
+    now_ist = get_trading_now()
+    force_exit_at = datetime.combine(
+        now_ist.date(),
+        _parse_hhmm(CONFIG.get("force_exit_time", "15:15")),
+    )
+    seconds_until_force_exit = (
+        force_exit_at - now_ist.replace(tzinfo=None)
+    ).total_seconds()
+    if seconds_until_force_exit > 0:
+        wait_sec = min(wait_sec, seconds_until_force_exit)
     if wait_sec > 0:
         time.sleep(wait_sec)
 
@@ -1937,7 +1972,16 @@ def live_signal_loop():
                 last_session_state_logged = session_state
 
             if session_state == "squareoff":
-                close_all_open_positions("SESSION_SQUAREOFF_15_30", now_ist.strftime("%Y-%m-%d %H:%M:%S"))
+                close_all_open_positions("SESSION_SQUAREOFF_15_15", now_ist.strftime("%Y-%m-%d %H:%M:%S"))
+                live_positions = get_live_open_positions()
+                reconcile_positions_with_groww(live_positions)
+                if not live_positions:
+                    print("[STRATEGY COMPLETE] All open positions closed at 15:15 IST", flush=True)
+                    return
+                print(
+                    f"[SQUAREOFF PENDING] {len(live_positions)} open position(s) remain; retrying.",
+                    flush=True,
+                )
                 wait_until_next_interval()
                 continue
 
@@ -2144,6 +2188,9 @@ def main():
         try:
             live_signal_loop()
         except KeyboardInterrupt:
+            pnl_log_stop_event.set()
+            mx_thread.join(timeout=2)
+        else:
             pnl_log_stop_event.set()
             mx_thread.join(timeout=2)
     except Exception:

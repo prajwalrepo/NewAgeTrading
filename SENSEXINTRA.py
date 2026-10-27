@@ -1198,7 +1198,6 @@ def print_open_position_risk_levels(idx_time):
         current_price = _get_cached_price(symbol)
         if current_price is None:
             current_price = fetch_latest_price_1m(symbol)
-        strike = pos.get("strike", "NA")
         lsl = float(pos.get("stop_loss_price", 0) or 0)
         mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
         tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
@@ -1213,9 +1212,9 @@ def print_open_position_risk_levels(idx_time):
             else "UNAVAILABLE"
         )
         current_price_text = (
-            f"LastPrice={float(current_price):.2f}"
+            f"OptionPrice={float(current_price):.2f}"
             if current_price is not None
-            else "LastPrice=UNAVAILABLE"
+            else "OptionPrice=UNAVAILABLE"
         )
         tsl_state = (
             "DISABLED" if not CONFIG.get("trailing_stop_enabled", True)
@@ -1223,7 +1222,7 @@ def print_open_position_risk_levels(idx_time):
             else "INACTIVE"
         )
         print(
-            f"[{idx_time}] [POSITION RISK] {symbol} | Mode={mode} Strike={strike} "
+            f"[{idx_time}] [POSITION RISK] {symbol} | Mode={mode} "
             f"Qty={qty} {current_price_text} UnrealizedPnL={pnl_text} "
             f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
         )
@@ -1497,9 +1496,18 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             increment_trade_count(candle_symbol)
         clear_pullback_reentry(candle_symbol)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_price = _get_cached_price(candle_symbol)
+        if current_price is None:
+            current_price = fetch_latest_price_1m(candle_symbol)
+        unrealized_pnl = (
+            f"{(float(current_price) - exec_price) * int(qty):.2f}"
+            if current_price is not None
+            else "UNAVAILABLE"
+        )
         print(
             f"[{ts}] [{'BUY CONFIRMED' if not paper_only else 'PAPER BUY TRACKED'}] "
-            f"{candle_symbol} Strike={strike if strike is not None else 'NA'} Qty={int(qty)}"
+            f"{candle_symbol} OptionPrice={exec_price:.2f} "
+            f"UnrealizedPnL={unrealized_pnl} Qty={int(qty)}"
             + (f" OrderID={order_id}" if order_id else "")
         )
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")

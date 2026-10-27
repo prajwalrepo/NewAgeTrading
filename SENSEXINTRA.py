@@ -75,8 +75,8 @@ CONFIG = {
     "trading_timezone_offset_minutes": 330,
     "trading_weekdays": ["WEDNESDAY", "THURSDAY"],
     "entry_window_start": "09:13",
-    "entry_window_end": "15:10",
-    "force_exit_time": "15:20",
+    "entry_window_end": "15:15",
+    "force_exit_time": "15:15",
 
     # Trade controls
     # Lot sizing is single-sized across CE/PE.
@@ -88,6 +88,8 @@ CONFIG = {
     "max_trades_per_day_ce": 5,
     "max_trades_per_day_pe": 5,
     "max_reentries_per_day": 2,
+    "consecutive_loss_stop_limit": 3,
+    "loss_streak_entry_pause_until": "12:00",
     "max_profit_per_day": 15000,
     "max_loss_per_day": 5000,
 
@@ -215,6 +217,8 @@ last_open_position_risk_log_key = None
 side_cooldown_tracker = {"CE": 0, "PE": 0}
 reentries_today = {"CE": 0, "PE": 0}
 loss_stop_reentries_today = {"CE": 0, "PE": 0}
+consecutive_loss_stop_exits = 0
+loss_streak_entry_pause_until = None
 no_data_warn_tracker = {}
 contract_universe = {"CE": [], "PE": []}
 order_to_candle = {}
@@ -968,6 +972,26 @@ def update_daily_pnl(pnl):
     daily_realized_pnl += float(pnl)
 
 
+def record_closed_trade_loss_streak(reason, pnl):
+    global consecutive_loss_stop_exits, loss_streak_entry_pause_until
+    if str(reason or "").upper().startswith("LSL") and float(pnl) < 0:
+        consecutive_loss_stop_exits += 1
+    else:
+        consecutive_loss_stop_exits = 0
+
+    loss_streak_limit = int(CONFIG.get("consecutive_loss_stop_limit", 3) or 0)
+    if loss_streak_limit > 0 and consecutive_loss_stop_exits == loss_streak_limit:
+        now_ist = get_trading_now()
+        pause_until_time = _parse_hhmm(CONFIG.get("loss_streak_entry_pause_until", "12:00"))
+        pause_until = datetime.combine(now_ist.date(), pause_until_time, tzinfo=now_ist.tzinfo)
+        if now_ist < pause_until:
+            loss_streak_entry_pause_until = pause_until
+            print(
+                f"[ENTRY PAUSED] {consecutive_loss_stop_exits} consecutive loss-stop exits; "
+                f"new entries paused until {pause_until.strftime('%H:%M')} IST"
+            )
+
+
 def live_entry_allowed_by_daily_limits():
     max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
     max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
@@ -1109,22 +1133,15 @@ def close_open_side(side, reason):
 
 def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = option_has_flip_buy_signal(candle_symbol, idx_time)
-    position = positions.get(candle_symbol)
     has_open_position_now = any(
         pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
         for pos in positions.values()
     )
-    pnl_text = "NA"
-    if position and int(position.get("qty", 0)) > 0 and last_price is not None:
-        entry_price = float(position.get("entry_price", 0) or 0)
-        qty_units = int(position.get("qty", 0) or 0)
-        if entry_price > 0 and qty_units > 0:
-            pnl_text = f"{(last_price - entry_price) * qty_units:.0f}"
     if last_price is None:
         if has_open_position_now:
             print_open_position_risk_levels(idx_time)
         else:
-            print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA PnL={pnl_text}")
+            print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA")
         return {
             "ok": ok,
             "last_price": None,
@@ -1147,7 +1164,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
     else:
         print(
             f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
-            f"Signal={signal} Direction={dir_text} PnL={pnl_text}"
+            f"Signal={signal} Direction={dir_text}"
         )
     return {
         "ok": ok,
@@ -1177,17 +1194,37 @@ def print_open_position_risk_levels(idx_time):
 
     for symbol, pos in open_positions:
         entry_price = float(pos.get("entry_price", 0) or 0)
+        qty = int(pos.get("qty", 0) or 0)
+        current_price = _get_cached_price(symbol)
+        if current_price is None:
+            current_price = fetch_latest_price_1m(symbol)
         strike = pos.get("strike", "NA")
         lsl = float(pos.get("stop_loss_price", 0) or 0)
         mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
         tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
+        mode = (
+            "PAPER"
+            if pos.get("paper_only") or not CONFIG.get("enable_actual_trade", True)
+            else "LIVE"
+        )
+        pnl_text = (
+            f"{(float(current_price) - entry_price) * qty:.2f}"
+            if current_price is not None and entry_price > 0 and qty > 0
+            else "UNAVAILABLE"
+        )
+        current_price_text = (
+            f"LastPrice={float(current_price):.2f}"
+            if current_price is not None
+            else "LastPrice=UNAVAILABLE"
+        )
         tsl_state = (
             "DISABLED" if not CONFIG.get("trailing_stop_enabled", True)
             else "ACTIVE" if pos.get("trailing_sl_activated", False)
             else "INACTIVE"
         )
         print(
-            f"[{idx_time}] [POSITION RISK] {symbol} | Strike={strike} "
+            f"[{idx_time}] [POSITION RISK] {symbol} | Mode={mode} Strike={strike} "
+            f"Qty={qty} {current_price_text} UnrealizedPnL={pnl_text} "
             f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
         )
 
@@ -1310,6 +1347,22 @@ def check_trailing_stop_exit():
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None, is_reentry=False):
     global daily_live_trading_halted
     try:
+        now_ist = get_trading_now()
+        entry_cutoff = _parse_hhmm(CONFIG.get("entry_window_end", "15:15"))
+        if now_ist.time() >= entry_cutoff:
+            print(
+                f"[BUY BLOCKED] {candle_symbol}: entry cutoff "
+                f"{entry_cutoff.strftime('%H:%M')} IST has passed"
+            )
+            return None
+
+        if loss_streak_entry_pause_until is not None and now_ist < loss_streak_entry_pause_until:
+            print(
+                f"[BUY BLOCKED] {candle_symbol}: loss-streak pause active until "
+                f"{loss_streak_entry_pause_until.strftime('%H:%M')} IST"
+            )
+            return None
+
         if has_open_position():
             print(f"[BUY BLOCKED] {candle_symbol}: another position is already open")
             return None
@@ -1386,6 +1439,14 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         if max_lots > 0:
             qty = min(int(qty), max_lots * lot_size)
 
+        now_ist = get_trading_now()
+        if now_ist.time() >= entry_cutoff:
+            print(
+                f"[BUY BLOCKED] {candle_symbol}: entry cutoff "
+                f"{entry_cutoff.strftime('%H:%M')} IST reached before order submission"
+            )
+            return None
+
         if not paper_only:
             resp = place_order_with_retry(order_symbol, qty, growwapi.TRANSACTION_TYPE_BUY, growwapi.PRODUCT_MIS)
             order_id = resp.get("groww_order_id")
@@ -1443,8 +1504,9 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         )
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
         print(
-            f"[TRADE SIGNAL] Script=SENSEXINTRA Side=BUY Time={signal_time} "
-            f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
+            f"[TRADE SIGNAL] Script=SENSEXINTRA Side=BUY "
+            f"Strike={strike if strike is not None else 'NA'} Time={signal_time} "
+            f"Symbol={candle_symbol} "
             f"Price={exec_price:.2f} Qty={int(qty)} "
             f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
             f"OrderPlaced={'YES' if not paper_only else 'NO'}",
@@ -1525,6 +1587,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
         print(f"[{ts}] [TRADE RESULT] Script=SENSEXINTRA Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
         update_daily_pnl(pnl)
+        record_closed_trade_loss_streak(reason, pnl)
         positions[candle_symbol]["status"] = "CLOSED"
         positions[candle_symbol]["exit_price"] = exec_price
         positions[candle_symbol]["exit_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1879,7 +1942,7 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
@@ -1888,6 +1951,8 @@ def live_signal_loop():
                 trades_today_pe = 0
                 daily_realized_pnl = 0.0
                 daily_live_trading_halted = False
+                consecutive_loss_stop_exits = 0
+                loss_streak_entry_pause_until = None
                 exit_attempt_tracker = {}
                 exit_reason_tracker = {}
                 buy_signal_attempt_tracker = {}
@@ -1923,7 +1988,19 @@ def live_signal_loop():
                 last_session_state_logged = session_state
 
             if session_state == "squareoff":
-                close_all_open_positions("SESSION_SQUAREOFF_15_30", now_ist.strftime("%Y-%m-%d %H:%M:%S"))
+                close_all_open_positions("SESSION_SQUAREOFF_15_15", now_ist.strftime("%Y-%m-%d %H:%M:%S"))
+                open_positions = [
+                    symbol for symbol, pos in positions.items()
+                    if pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
+                ]
+                if not open_positions:
+                    print("[STRATEGY COMPLETE] All open positions closed at 15:15 IST", flush=True)
+                    pnl_log_stop_event.set()
+                    break
+                print(
+                    f"[SQUARE-OFF RETRY] Positions still open after 15:15: {open_positions}",
+                    flush=True,
+                )
                 wait_until_next_interval()
                 continue
 
@@ -2043,8 +2120,9 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SETUP] Script=SENSEXINTRA Side=BUY Time={signal_time} Symbol={candle_symbol} "
-                                f"Strike={ce_snapshot.get('strike', 'NA')} Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
+                                f"[TRADE SETUP] Script=SENSEXINTRA Side=BUY "
+                                f"Strike={ce_snapshot.get('strike', 'NA')} Time={signal_time} Symbol={candle_symbol} "
+                                f"Price={float(ce_snapshot.get('last_price')):.2f} Reason={signal_reason} "
                                 f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )
@@ -2082,8 +2160,9 @@ def live_signal_loop():
                                 else "Supertrend flip entry"
                             )
                             print(
-                                f"[TRADE SETUP] Script=SENSEXINTRA Side=BUY Time={signal_time} Symbol={candle_symbol} "
-                                f"Strike={pe_snapshot.get('strike', 'NA')} Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
+                                f"[TRADE SETUP] Script=SENSEXINTRA Side=BUY "
+                                f"Strike={pe_snapshot.get('strike', 'NA')} Time={signal_time} Symbol={candle_symbol} "
+                                f"Price={float(pe_snapshot.get('last_price')):.2f} Reason={signal_reason} "
                                 f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )

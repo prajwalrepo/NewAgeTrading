@@ -44,7 +44,8 @@ CONFIG = {
     "entry_window_end": "15:21",
     "strike_decision_time": "15:15",
     "margin_precheck_time": "15:17",
-    "monitor_interval_seconds": 30,
+    "monitor_interval_seconds": 60,
+    "no_upside_exit_time": "15:24",
     "itm_offset_points": 100,
     "force_exit_time": "15:30",
     "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
@@ -77,7 +78,7 @@ CONFIG = {
         "order_expiry": ["26O19", "26OCT", "26N03","26N09", "26N17", "26NOV"],
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 150.0,
-        "stop_loss_percent": 40.0,
+        "stop_loss_percent": 30.0,
         "max_lots_per_trade": 1,
     },
     "sensex": {
@@ -95,7 +96,7 @@ CONFIG = {
         "order_expiry": ["26O22", "26OCT", "26N05","26N12", "26N19", "26NOV"],
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 200.0,
-        "stop_loss_percent": 50,
+        "stop_loss_percent": 30.0,
         "max_lots_per_trade": 1,
     },
 }
@@ -128,7 +129,7 @@ def _make_paper_leg(order_symbol, price, reason="PAPER", qty=None, strike=None, 
 
 def _log_trade_signal(side, order_symbol, strike, price, reason, order_placed,
                       lots=None, lot_size=None, qty=None, trade_time=None,
-                      buy_price=None, sell_price=None, pnl=None):
+                      buy_price=None, sell_price=None, pnl=None, pnl_percent=None):
     signal_time = trade_time or get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
     log_event(
         f"[TRADE SIGNAL] Script=320trade Side={side} Time={signal_time} Symbol={order_symbol} "
@@ -139,16 +140,22 @@ def _log_trade_signal(side, order_symbol, strike, price, reason, order_placed,
         f"{f'BuyAt={float(buy_price):.2f} ' if buy_price is not None else ''}"
         f"{f'SellAt={float(sell_price):.2f} ' if sell_price is not None else ''}"
         f"{f'PnL={float(pnl):.2f} ' if pnl is not None else ''}"
+        f"{f'PnLPercent={float(pnl_percent):.2f}% ' if pnl_percent is not None else ''}"
         f"OrderPlaced={'YES' if order_placed else 'NO'}"
     )
 
 
 def _log_exit_signal(order_symbol, strike, buy_price, sell_price, pnl, reason,
                      order_placed, qty=None, trade_time=None):
+    pnl_percent = (
+        float(pnl) / (float(buy_price) * int(qty)) * 100
+        if qty and float(buy_price) > 0
+        else None
+    )
     _log_trade_signal(
         "SELL", order_symbol, strike, sell_price, reason, order_placed,
         qty=qty, trade_time=trade_time, buy_price=buy_price,
-        sell_price=sell_price, pnl=pnl,
+        sell_price=sell_price, pnl=pnl, pnl_percent=pnl_percent,
     )
 
 
@@ -746,14 +753,19 @@ def place_sell_order(order_symbol, price, reason, qty, strike=None, entry_price=
             exec_price = avg_price if avg_price and avg_price > 0 else price
             entry_value = float(entry_price if entry_price is not None else price)
             pnl = (exec_price - entry_value) * qty
+            pnl_percent = pnl / (entry_value * qty) * 100 if entry_value > 0 and qty else 0.0
             signal_time = get_ist_now().strftime("%Y-%m-%dT%H:%M:%S")
             _log_trade_signal(
                 "SELL", order_symbol, strike, exec_price, reason, True,
                 qty=qty, trade_time=signal_time, buy_price=entry_value,
-                sell_price=exec_price, pnl=pnl,
+                sell_price=exec_price, pnl=pnl, pnl_percent=pnl_percent,
             )
             log_event(f"[EXIT CONFIRMED] {order_symbol} x{qty} | Reason={reason} | Exit={exec_price:.2f} OrderID={order_id}")
-            log_event(f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={strike if strike is not None else 'NA'} BuyAt={entry_value:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
+            log_event(
+                f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} "
+                f"Strike={strike if strike is not None else 'NA'} BuyAt={entry_value:.2f} "
+                f"SellAt={exec_price:.2f} PnL={pnl:.2f} PnLPercent={pnl_percent:.2f}%"
+            )
             return order_id
         log_event(f"[SELL FAIL] {order_symbol} final status={final_status}")
         return None
@@ -867,11 +879,61 @@ def monitor_open_positions(state):
         take_profit = entry_price + max_profit_amount / leg["qty"]
         stop_loss = entry_price - max_loss_amount / leg["qty"]
         mode_text = "BROKER" if leg.get("broker_order_placed", True) else "PAPER"
+        pnl_percent = est_pnl / (entry_price * leg["qty"]) * 100
         log_event(
-            f"[EST PNL] {order_symbol} Mode={mode_text} Entry={entry_price:.2f} Now={current_price:.2f} "
-            f"Qty={leg['qty']} EstPnL={est_pnl:.2f} MaxProfit={max_profit_amount:.2f} "
-            f"MaxLoss={max_loss_amount:.2f} TP={take_profit:.2f} SL={stop_loss:.2f}"
+            f"[POSITION TRACK] Leg={leg_key.upper()} Symbol={order_symbol} Mode={mode_text} "
+            f"BuyAt={entry_price:.2f} CurrentPrice={current_price:.2f} Qty={leg['qty']} "
+            f"PnL={est_pnl:.2f} PnLPercent={pnl_percent:.2f}% "
+            f"TakeProfitPrice={take_profit:.2f} (+{take_profit_percent:g}%) "
+            f"StopLossPrice={stop_loss:.2f} (-{stop_loss_percent:g}%)"
         )
+
+        no_upside_exit_time = _parse_hhmm(CONFIG.get("no_upside_exit_time", "15:24"))
+        now_ist = get_ist_now()
+        current_time = dt_time(now_ist.hour, now_ist.minute, now_ist.second)
+        if (
+            current_time >= no_upside_exit_time
+            and not leg.get("no_upside_check_completed")
+        ):
+            if current_price > entry_price:
+                leg["no_upside_check_completed"] = True
+                log_event(
+                    f"[NO UPSIDE CHECK PASSED] {order_symbol}: "
+                    f"CurrentPrice={current_price:.2f} is above BuyAt={entry_price:.2f}"
+                )
+            else:
+                reason = "NO_UPSIDE_BY_15_24"
+                log_event(
+                    f"[NO UPSIDE EXIT] {order_symbol}: CurrentPrice={current_price:.2f} "
+                    f"did not move above BuyAt={entry_price:.2f} by "
+                    f"{no_upside_exit_time.strftime('%H:%M')} IST"
+                )
+                if leg.get("paper_only"):
+                    signal_time = now_ist.strftime("%Y-%m-%dT%H:%M:%S")
+                    _log_exit_signal(
+                        order_symbol, leg.get("strike"), entry_price, current_price,
+                        est_pnl, f"{reason} (paper exit)", False, qty=leg["qty"],
+                        trade_time=signal_time,
+                    )
+                    leg["closed"] = True
+                    leg["exit_reason"] = "NO_UPSIDE"
+                    leg["no_upside_check_completed"] = True
+                    log_event(f"[PAPER EXIT] {order_symbol} closed on no-upside condition")
+                elif place_sell_order(
+                    order_symbol, current_price, reason, leg["qty"],
+                    strike=leg.get("strike"), entry_price=entry_price,
+                ):
+                    leg["closed"] = True
+                    leg["exit_reason"] = "NO_UPSIDE"
+                    leg["no_upside_check_completed"] = True
+                elif not leg.get("failed_exit_signal_sent"):
+                    _log_exit_signal(
+                        order_symbol, leg.get("strike"), entry_price, current_price,
+                        est_pnl, f"{reason} (broker exit failed; reference only)",
+                        False, qty=leg["qty"],
+                    )
+                    leg["failed_exit_signal_sent"] = True
+                continue
 
         if est_pnl >= max_profit_amount:
             reason = f"TP +{take_profit_percent:g}%"
@@ -939,9 +1001,11 @@ def close_remaining_positions(state, reason):
                 est_pnl, f"{reason} (paper/reference exit)", False,
                 qty=leg["qty"], trade_time=signal_time,
             )
+            pnl_percent = est_pnl / (float(leg["entry_price"]) * leg["qty"]) * 100
             log_event(
                 f"[TRADE RESULT] Script=320trade Side=SELL Symbol={order_symbol} Strike={leg.get('strike', 'NA')} "
-                f"BuyAt={float(leg['entry_price']):.2f} SellAt={float(current_price):.2f} PnL={est_pnl:.0f}"
+                f"BuyAt={float(leg['entry_price']):.2f} SellAt={float(current_price):.2f} "
+                f"PnL={est_pnl:.2f} PnLPercent={pnl_percent:.2f}%"
             )
             leg["closed"] = True
             leg["exit_reason"] = reason
@@ -1234,7 +1298,17 @@ def main_loop():
                 ).total_seconds()
                 time.sleep(max(0.05, min(5.0, seconds_until_entry)))
             elif state["entered"]:
-                time.sleep(max(1, int(CONFIG.get("monitor_interval_seconds", 30))))
+                next_check_seconds = max(1, int(CONFIG.get("monitor_interval_seconds", 60)))
+                sleep_now = get_ist_now()
+                squareoff_at = datetime.combine(
+                    sleep_now.date(), _parse_hhmm(CONFIG["force_exit_time"])
+                )
+                seconds_until_squareoff = (
+                    squareoff_at - sleep_now.replace(tzinfo=None)
+                ).total_seconds()
+                if seconds_until_squareoff <= 0:
+                    continue
+                time.sleep(max(1, min(next_check_seconds, seconds_until_squareoff)))
             else:
                 time.sleep(5)
         except KeyboardInterrupt:

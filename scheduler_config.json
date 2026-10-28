@@ -25,9 +25,9 @@
     ],
     "send_on_signals": true,
     "send_daily_summary_on_stop": true,
-    "send_monthly_summary_on_month_end": true,
-    "monthly_summary_recipients": ["gencinvestor@gmail.com"],
-    "notes": "Signal emails contain trade details without workbook attachments. Daily summary emails include a trade table and the Excel workbook. Month-end summary emails contain the full monthly trade table without an attachment."
+    "send_weekly_summary_on_monday": true,
+    "weekly_summary_recipients": ["gencinvestor@gmail.com"],
+    "notes": "Signal emails contain trade details without workbook attachments. Daily summaries include a trade table and workbook. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell report attached as an Excel workbook; the email body contains no trade table."
   },
 
   "scripts": {
@@ -35,9 +35,9 @@
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy with 3:15 PM IST square-off",
       "enabled": true,
-      "run_days": ["MONDAY", "TUESDAY","WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:13",
-      "run_time_end": "15:30",
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "09:30",
+      "run_time_end": "15:16",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
       "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
@@ -46,10 +46,10 @@
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
       "description": "SENSEX Intraday FNO Strategy with 3:15 PM IST square-off",
-      "enabled": false,
-      "run_days": ["WEDNESDAY", "THURSDAY"],
-      "run_time_start": "09:12",
-      "run_time_end": "15:30",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "09:30",
+      "run_time_end": "15:16",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
       "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
@@ -70,12 +70,11 @@
     "OILMINI": {
       "script_name": "OILMINI.py",
       "description": "Crude Oil Mini Options Strategy (MCX)",
-      "enabled": false,
-      "exclusive_group": "MCX_COMMODITY",
+      "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      "run_days_of_month": [10, 11, 12, 13, 14, 17],
       "run_time_start": "16:00",
-      "run_time_end": "23:30",
+      "run_time_end": "23:00",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
@@ -85,10 +84,10 @@
     "NATGASMINI": {
       "script_name": "NATGASMINI.py",
       "description": "Natural Gas Mini Options Strategy (MCX)",
-      "enabled": false,
-      "exclusive_group": "MCX_COMMODITY",
+      "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:00",
+      "run_days_of_month": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 20],
+      "run_time_start": "16:00",
       "run_time_end": "23:35",
       "api_delay_seconds": 10,
       "send_signal_emails": true,

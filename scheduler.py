@@ -20,7 +20,6 @@ import time
 import smtplib
 import mimetypes
 import re
-import calendar
 import hashlib
 import html
 import tempfile
@@ -40,6 +39,7 @@ LOG_DIR.mkdir(exist_ok=True)
 RUN_LOG_DIR = LOG_DIR / "script_runs"
 RUN_LOG_DIR.mkdir(exist_ok=True)
 MONTHLY_REPORT_DIR = LOG_DIR / "monthly_trade_reports"
+WEEKLY_REPORT_DIR = LOG_DIR / "weekly_trade_reports"
 CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -74,8 +74,8 @@ SCRIPTS_SCHEDULE = {
         "description": "NIFTY Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "09:13",  # IST
-        "run_time_end": "15:30",
+        "run_time_start": "09:30",  # IST
+        "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
@@ -84,10 +84,10 @@ SCRIPTS_SCHEDULE = {
         "script_name": "SENSEXINTRA.py",
         "description": "SENSEX Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
-        "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": None,  # Every day of month
-        "run_time_start": "09:12",
-        "run_time_end": "15:30",
+        "run_time_start": "09:30",
+        "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
@@ -95,7 +95,7 @@ SCRIPTS_SCHEDULE = {
     "320trade": {
         "script_name": "320trade.py",
         "description": "Expiry-day 3:20 ITM CE+PE Strategy",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_time_start": "15:15",
         "run_time_end": "15:30",
@@ -106,13 +106,12 @@ SCRIPTS_SCHEDULE = {
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": False,
-        "exclusive_group": "MCX_COMMODITY",
+        "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
+        "run_days_of_month": [],
         "run_time_start": "16:00",
-        "run_time_end": "23:30",  # MCX trades longer
+        "run_time_end": "23:00",  # MCX trades longer
         "api_delay_seconds": 00,  # Start 60 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
@@ -121,12 +120,11 @@ SCRIPTS_SCHEDULE = {
         "script_name": "NATGASMINI.py",
         "description": "Natural Gas Mini Options Strategy",
         "enabled": True,
-        "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": None,  # Every day of the month
+        "run_days_of_month": [],
         "run_time_start": "16:00",
-        "run_time_end": "23:30",  # MCX trades longer
+        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
         "api_delay_seconds": 00,  # Start 90 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
@@ -166,8 +164,8 @@ CONFIG = {
         "to_emails": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
-        "send_monthly_summary_on_month_end": True,
-        "monthly_summary_recipients": [],
+        "send_weekly_summary_on_monday": True,
+        "weekly_summary_recipients": [],
     },
 }
 
@@ -1171,22 +1169,53 @@ def email_daily_trade_summary(run_context, reason):
     )
 
 
-def _monthly_summary_due(now, running_processes):
-    if now.day != calendar.monthrange(now.year, now.month)[1]:
-        return False
+def _week_trade_date(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
-    market_configs = [
-        script_config
-        for config_key, script_config in SCRIPTS_SCHEDULE.items()
-        if config_key.upper() in MONTHLY_REPORT_SHEETS and script_config.get("enabled", True)
-    ]
-    if not market_configs:
-        return False
-    latest_end_time = max(
-        parse_time(script_config.get("run_time_end", "23:59"))
-        for script_config in market_configs
+
+def _weekly_trade_report_path(week_start, week_end):
+    return WEEKLY_REPORT_DIR / (
+        f"Weekly_{week_start:%Y%m%d}_{week_end:%Y%m%d}.xlsx"
     )
-    if now.time().replace(tzinfo=None) <= latest_end_time:
+
+
+def _create_weekly_trade_report(week_start, week_end):
+    workbook = Workbook()
+    sheet_names = list(MONTHLY_REPORT_SHEETS.values())
+    for index, sheet_name in enumerate(sheet_names):
+        sheet = workbook.active if index == 0 else workbook.create_sheet()
+        _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
+
+    month_paths = {
+        _monthly_trade_report_path(datetime.combine(day, dt_time.min).isoformat())
+        for day_offset in range((week_end - week_start).days + 1)
+        for day in [week_start + timedelta(days=day_offset)]
+    }
+    weekly_rows = {sheet_name: [] for sheet_name in sheet_names}
+    for source_path in sorted(month_paths):
+        if not source_path.exists():
+            continue
+        for sheet_name in sheet_names:
+            for row in _trade_report_rows(source_path, sheet_name):
+                trade_date = _week_trade_date(row.get("Time"))
+                if trade_date is not None and week_start <= trade_date <= week_end:
+                    weekly_rows[sheet_name].append(row)
+
+    for sheet_name, rows in weekly_rows.items():
+        rows.sort(key=lambda row: str(row.get("Time") or ""))
+        sheet = workbook[sheet_name]
+        for row in rows:
+            sheet.append(tuple(row.get(column) for column in TRADE_REPORT_COLUMNS) + ("",))
+        sheet.auto_filter.ref = sheet.dimensions
+
+    return workbook, weekly_rows
+
+
+def _weekly_summary_due(now, running_processes):
+    if now.weekday() != DayOfWeek.MONDAY.value:
         return False
 
     return not any(
@@ -1196,41 +1225,37 @@ def _monthly_summary_due(now, running_processes):
     )
 
 
-def email_monthly_trade_summary(now=None, running_processes=None):
-    """Email the full month of market signals after the final configured run."""
+def email_weekly_trade_summary(now=None, running_processes=None):
+    """Email the previous Monday-through-Sunday trade report on Monday."""
     email_cfg = CONFIG.get("email_notifications", {})
     if (
         not email_cfg.get("enabled", False)
-        or not email_cfg.get("send_monthly_summary_on_month_end", True)
+        or not email_cfg.get("send_weekly_summary_on_monday", True)
     ):
         return
 
     now = now or get_ist_time()
     running_processes = running_processes or {}
-    if not _monthly_summary_due(now, running_processes):
+    if not _weekly_summary_due(now, running_processes):
         return
 
-    month_key = now.strftime("%Y%m")
-    MONTHLY_REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    marker_path = MONTHLY_REPORT_DIR / f"summary_sent_{month_key}.txt"
+    week_start = (now - timedelta(days=now.weekday() + 7)).date()
+    week_end = week_start + timedelta(days=6)
+    week_key = week_start.strftime("%Y%m%d")
+    WEEKLY_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    marker_path = WEEKLY_REPORT_DIR / f"summary_sent_{week_key}.txt"
     if marker_path.exists():
         return
 
-    report_path = MONTHLY_REPORT_DIR / f"NIFTY_{datetime.strptime(month_key, '%Y%m').strftime('%b').upper()}.xlsx"
-    if not report_path.exists():
-        workbook = _create_monthly_trade_report()
+    report_path = _weekly_trade_report_path(week_start, week_end)
+    try:
+        workbook, market_rows = _create_weekly_trade_report(week_start, week_end)
         try:
             _save_trade_report(workbook, report_path)
         finally:
             workbook.close()
-
-    try:
-        market_rows = {
-            sheet_name: _trade_report_rows(report_path, sheet_name)
-            for sheet_name in MONTHLY_REPORT_SHEETS.values()
-        }
     except Exception as exc:
-        logger.error(f"[REPORT] Failed to prepare monthly summary for {month_key}: {exc}")
+        logger.error(f"[REPORT] Failed to prepare weekly summary for {week_key}: {exc}")
         return
 
     all_rows = [row for rows in market_rows.values() for row in rows]
@@ -1239,37 +1264,25 @@ def email_monthly_trade_summary(now=None, running_processes=None):
     orders_placed = sum(
         str(row.get("Order Placed") or "").upper() == "YES" for row in all_rows
     )
-    subject = f"[MONTHLY SUMMARY] {now:%B %Y}"
-    month_label = now.strftime("%B %Y")
+    subject = f"[WEEKLY SUMMARY] {week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}"
     body = (
-        f"Monthly trade details for {month_label}\n"
+        f"Weekly trade summary for {week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}\n"
         f"Total signals: {len(all_rows)} | Buy signals: {buys} | "
         f"Sell signals: {sells} | Orders placed: {orders_placed}\n"
-        "The table rows below include both generated signals and whether an order was placed.\n"
+        "The attached Excel workbook contains the complete week's buy and sell signals, "
+        "including whether each order was placed."
     )
-    html_sections = [
-        f"<html><body><h2>Monthly trade details - {html.escape(month_label)}</h2>"
-        f"<p>Total signals: {len(all_rows)} | Buy signals: {buys} | "
-        f"Sell signals: {sells} | Orders placed: {orders_placed}</p>"
-        "<p>Includes generated signals and whether an order was placed.</p>"
-    ]
-    for sheet_name, rows in market_rows.items():
-        body += f"\n{sheet_name}\n{_trade_rows_text(rows)}\n"
-        html_sections.append(
-            f"<h3>{html.escape(sheet_name)}</h3>{_trade_rows_html(rows)}"
-        )
-    html_sections.append("</body></html>")
 
     if send_email_notification(
         subject,
         body,
-        html_body="".join(html_sections),
-        recipients=email_cfg.get("monthly_summary_recipients"),
+        attachment_path=report_path,
+        recipients=email_cfg.get("weekly_summary_recipients"),
     ):
         try:
             marker_path.write_text(now.isoformat(), encoding="utf-8")
         except OSError as exc:
-            logger.error(f"[REPORT] Failed to mark monthly summary {month_key} as sent: {exc}")
+            logger.error(f"[REPORT] Failed to mark weekly summary {week_key} as sent: {exc}")
 
 
 def email_trade_signal(config_key, trade, recipients=None):
@@ -1524,7 +1537,7 @@ def scheduler_loop():
                     blocked_failures.pop(config_key, None)
             
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
-            email_monthly_trade_summary(now=get_ist_time(), running_processes=running_processes)
+            email_weekly_trade_summary(now=get_ist_time(), running_processes=running_processes)
             
             # Sleep before next check
             sleep_seconds = float(CONFIG["check_interval_seconds"])

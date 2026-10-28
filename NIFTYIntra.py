@@ -72,7 +72,6 @@ CONFIG = {
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     "entry_window_start": "09:13",
     "entry_window_end": "15:10",
     "force_exit_time": "15:15",
@@ -223,17 +222,6 @@ loop_candle_cache = {}
 loop_price_cache = {}
 
 
-WEEKDAY_NAME_TO_INT = {
-    "MONDAY": 0,
-    "TUESDAY": 1,
-    "WEDNESDAY": 2,
-    "THURSDAY": 3,
-    "FRIDAY": 4,
-    "SATURDAY": 5,
-    "SUNDAY": 6,
-}
-
-
 def clear_loop_market_cache():
     loop_candle_cache.clear()
     loop_price_cache.clear()
@@ -269,25 +257,8 @@ def _parse_hhmm(value):
     return datetime.strptime(str(value or "00:00").strip(), "%H:%M").time()
 
 
-def _get_allowed_weekdays():
-    configured = CONFIG.get("trading_weekdays", []) or []
-    allowed = set()
-    for item in configured:
-        if isinstance(item, int):
-            allowed.add(int(item))
-        else:
-            mapped = WEEKDAY_NAME_TO_INT.get(str(item).strip().upper())
-            if mapped is not None:
-                allowed.add(mapped)
-    return allowed
-
-
 def get_session_state(now_dt=None):
     now_dt = now_dt or get_trading_now()
-    allowed_weekdays = _get_allowed_weekdays()
-    if allowed_weekdays and now_dt.weekday() not in allowed_weekdays:
-        return "closed_day"
-
     current_time = dt_time(now_dt.hour, now_dt.minute, now_dt.second)
     entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "09:15"))
     entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "15:10"))
@@ -1944,12 +1915,7 @@ def live_signal_loop():
             session_state = get_session_state(now_ist)
 
             if session_state != last_session_state_logged:
-                if session_state == "closed_day":
-                    print(
-                        f"[SESSION] Market closed today. Allowed days={CONFIG.get('trading_weekdays')} "
-                        f"Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
-                elif session_state == "pre_open":
+                if session_state == "pre_open":
                     print(
                         f"[SESSION] Outside market hours. Trading starts at {CONFIG.get('entry_window_start')} IST. "
                         f"Current IST={now_ist.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1985,7 +1951,7 @@ def live_signal_loop():
                 wait_until_next_interval()
                 continue
 
-            if session_state in {"closed_day", "pre_open"}:
+            if session_state == "pre_open":
                 wait_until_next_interval()
                 continue
 

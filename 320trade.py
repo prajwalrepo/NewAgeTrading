@@ -54,7 +54,7 @@ CONFIG = {
     # Fallback lot size used only if instrument lot size is not configured.
     "lot_size": 1,
     # Keep True to place real broker orders.
-    "enable_actual_trade": True,
+    "enable_actual_trade": False,
     "check_margin_before_order": True,
     # Keep True to continue paper logging when real orders fail.
     "debug_paper_tracking_enabled": True,

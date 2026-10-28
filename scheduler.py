@@ -73,7 +73,7 @@ SCRIPTS_SCHEDULE = {
         "script_name": "NIFTYIntra.py",
         "description": "NIFTY Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
-        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",
         "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)

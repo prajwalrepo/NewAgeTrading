@@ -35,7 +35,7 @@
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy with 3:15 PM IST square-off",
       "enabled": true,
-      "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
+      "run_days": ["MONDAY", "TUESDAY","WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "09:13",
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
@@ -46,7 +46,7 @@
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
       "description": "SENSEX Intraday FNO Strategy with 3:15 PM IST square-off",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:12",
       "run_time_end": "15:30",
@@ -58,7 +58,7 @@
     "320trade": {
       "script_name": "320trade.py",
       "description": "Expiry-day 3:20 ITM CE+PE Strategy",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "15:15",
       "run_time_end": "15:30",
@@ -85,7 +85,7 @@
     "NATGASMINI": {
       "script_name": "NATGASMINI.py",
       "description": "Natural Gas Mini Options Strategy (MCX)",
-      "enabled": true,
+      "enabled": false,
       "exclusive_group": "MCX_COMMODITY",
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "09:00",
@@ -99,7 +99,7 @@
     "SupperWeekScan": {
       "script_name": "SupperWeekScan.py",
       "description": "Weekly stock scanner using Groww weekly candles",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["FRIDAY"],
       "run_time_start": "23:00",
       "run_time_end": "23:05",

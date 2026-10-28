@@ -72,7 +72,7 @@ CONFIG = {
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "trading_weekdays": ["MONDAY", "TUESDAY", "FRIDAY"],
+    "trading_weekdays": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
     "entry_window_start": "09:13",
     "entry_window_end": "15:10",
     "force_exit_time": "15:15",

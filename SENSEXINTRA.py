@@ -8,10 +8,8 @@
 #       SENSEX-{FetchingExpiry}-78000-CE
 #    and order symbols in the form:
 #       SENSEX{orderexpiry}78000CE
-# 4) Enter only on a closed candle when Supertrend flips from down to up.
-# 5) Require the entry candle to close above the previous candle.
-# 6) Avoid entries when the entry candle opens more than 10 points away from
-#    the previous close.
+# 4) Generate signals from closed-candle Supertrend flips, independent of order filters.
+# 5) Apply momentum and candle-gap/body limits only when checking order eligibility.
 # 7) Stop loss uses the entry candle open price.
 # 8) Includes max profit booking, money allocation per trade, and side cooldown.
 # =============================================================================
@@ -63,9 +61,10 @@ CONFIG = {
     # Entry rules
     "use_momentum_filter": True,
     "require_close_above_prev_close": True,
-    # Open-gap limit; also caps the closed signal candle's open-to-close move.
+    # Signal generation is independent of these paper/live order-entry filters.
+    "signal_candle_body_limit_points": 30.0,
     "entry_open_gap_limit_points": 30.0,
-    "flip_confirmation_window_candles": 1,
+    "flip_confirmation_window_candles": 2,
     "pullback_reentry_enabled": True,
     "pullback_reentry_touch_tolerance_points": 10.0,
     "max_loss_stop_reentries_per_day": 1,
@@ -210,6 +209,7 @@ daily_live_trading_halted = False
 exit_attempt_tracker = {}
 exit_reason_tracker = {}
 buy_signal_attempt_tracker = {}
+strategy_signal_tracker = {}
 debug_signal_positions = {}
 debug_last_max_check_at = {}
 pullback_reentry_tracker = {}
@@ -1132,7 +1132,32 @@ def close_open_side(side, reason):
 
 
 def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
-    ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = option_has_flip_buy_signal(candle_symbol, idx_time)
+    ok, last_price, entry_open, entry_low, st_value, opt_trend, signal, rejection_reasons, signal_event_time = option_has_flip_buy_signal(candle_symbol, idx_time)
+    if signal in {"BUY", "BUY_REENTRY", "SELL"}:
+        signal_key = (signal, signal_event_time)
+        if strategy_signal_tracker.get(candle_symbol) != signal_key:
+            strategy_signal_tracker[candle_symbol] = signal_key
+            signal_side = "SELL" if signal == "SELL" else "BUY"
+            print(
+                f"[STRATEGY SIGNAL] Script=SENSEXINTRA Side={signal_side} "
+                f"Strike={strike} Time={str(signal_event_time).replace(' ', 'T', 1)} "
+                f"Symbol={candle_symbol} Price={float(last_price or 0):.2f} "
+                f"Reason={'Supertrend flip' if signal != 'BUY_REENTRY' else 'pullback re-entry continuation'} "
+                f"CandleChecks={'NA' if signal == 'SELL' else ('PASS' if ok else 'FAIL')}",
+                flush=True,
+            )
+    if rejection_reasons:
+        if signal in {"BUY", "BUY_REENTRY"}:
+            label = "BUY ORDER BLOCKED"
+        elif "NO_OPEN_POSITION_FOR_SELL" in rejection_reasons:
+            label = "SELL WAITING"
+        else:
+            label = "BUY WAITING"
+        print(
+            f"[{idx_time}] [{label}] {candle_symbol} "
+            f"Reasons={','.join(rejection_reasons)}",
+            flush=True,
+        )
     has_open_position_now = any(
         pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
         for pos in positions.values()
@@ -1150,6 +1175,8 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
             "st_value": st_value,
             "opt_trend": opt_trend,
             "signal": signal,
+            "rejection_reasons": rejection_reasons,
+            "signal_event_time": signal_event_time,
             "candle_symbol": candle_symbol,
             "side": side,
             "strike": strike,
@@ -1165,6 +1192,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         print(
             f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
             f"Signal={signal} Direction={dir_text}"
+            f"{' Reason=' + ','.join(rejection_reasons) if rejection_reasons else ''}"
         )
     return {
         "ok": ok,
@@ -1174,6 +1202,8 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         "st_value": st_value,
         "opt_trend": opt_trend,
         "signal": signal,
+        "rejection_reasons": rejection_reasons,
+        "signal_event_time": signal_event_time,
         "candle_symbol": candle_symbol,
         "side": side,
         "strike": strike,
@@ -1775,12 +1805,12 @@ def check_debug_sell_signals(idx_time):
 def option_has_flip_buy_signal(candle_symbol, idx_time):
     df, err = fetch_recent_candles(candle_symbol, "SEGMENT_FNO")
     if df is None or df.empty or len(df) < CONFIG["atr_period"] + 2:
-        return False, None, None, None, None, None, "NO_SIGNAL"
+        return False, None, None, None, None, None, "NO_SIGNAL", [], None
 
     closed_idx = len(df) - 2
     prev_idx = closed_idx - 1
     if prev_idx < 0:
-        return False, None, None, None, None, None, "NO_SIGNAL"
+        return False, None, None, None, None, None, "NO_SIGNAL", [], None
 
     st_arr, dir_arr = supertrend(df, CONFIG["atr_period"], CONFIG["factor"])
     entry_open = float(df["open"].iloc[closed_idx])
@@ -1791,13 +1821,27 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
     st_value = float(st_arr[closed_idx]) if not np.isnan(st_arr[closed_idx]) else None
     trend = "up" if dir_arr[closed_idx] == 1 else "down"
 
-    fresh_flip = dir_arr[closed_idx] == 1 and dir_arr[prev_idx] == -1
-
-    window_left = int(CONFIG.get("flip_confirmation_window_candles", 1) or 0)
-    allow_flip = fresh_flip
-    if window_left > 1:
-        last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
-        allow_flip = last_attempt_time == idx_time or fresh_flip
+    flip_window = max(1, int(CONFIG.get("flip_confirmation_window_candles", 1) or 1))
+    flip_window_start = max(1, closed_idx - flip_window + 1)
+    up_flip_indices = [
+        flip_idx
+        for flip_idx in range(flip_window_start, closed_idx + 1)
+        if dir_arr[flip_idx] == 1 and dir_arr[flip_idx - 1] == -1
+    ]
+    recent_flip = bool(up_flip_indices)
+    down_flip = dir_arr[closed_idx] == -1 and dir_arr[prev_idx] == 1
+    position = positions.get(candle_symbol, {})
+    contract_is_open = (
+        position.get("status") == "OPEN"
+        and int(position.get("qty", 0) or 0) > 0
+    )
+    sell_signal = down_flip and contract_is_open
+    allow_flip = dir_arr[closed_idx] == 1 and recent_flip
+    signal_event_time = (
+        str(df["date"].iloc[up_flip_indices[-1]])
+        if allow_flip
+        else (str(df["date"].iloc[closed_idx]) if sell_signal else None)
+    )
 
     momentum_ok = True
     if CONFIG.get("use_momentum_filter", True):
@@ -1805,7 +1849,10 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
 
     open_gap_ok = abs(entry_open - prev_close) <= float(CONFIG.get("entry_open_gap_limit_points", 10.0))
     signal_candle_body_ok = abs(close_price - entry_open) <= float(
-        CONFIG.get("entry_open_gap_limit_points", 10.0)
+        CONFIG.get(
+            "signal_candle_body_limit_points",
+            CONFIG.get("entry_open_gap_limit_points", 10.0),
+        )
     )
 
     reentry_candidate = pullback_reentry_tracker.get(candle_symbol)
@@ -1813,14 +1860,28 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
         reentry_candidate = None
 
     reentry_ok = False
+    reentry_blockers = []
     if reentry_candidate is not None:
         if trend != "up":
             clear_pullback_reentry(candle_symbol)
+            reentry_blockers.append("TREND_NOT_UP")
         else:
             touch_tolerance = float(CONFIG.get("pullback_reentry_touch_tolerance_points", 3.0) or 0)
             touched_st = st_value is not None and entry_low <= (st_value + touch_tolerance)
             reclaimed_uptrend = st_value is not None and close_price > st_value
             continuation_ok = close_price > prev_high and close_price >= entry_open
+            if not signal_candle_body_ok:
+                reentry_blockers.append("CANDLE_BODY_LIMIT")
+            if not touched_st:
+                reentry_blockers.append("NO_SUPERTREND_PULLBACK")
+            if not reclaimed_uptrend:
+                reentry_blockers.append("SUPERTREND_NOT_RECLAIMED")
+            if not continuation_ok:
+                reentry_blockers.append("NO_CONTINUATION")
+            if not momentum_ok:
+                reentry_blockers.append("MOMENTUM")
+            if not open_gap_ok:
+                reentry_blockers.append("OPEN_GAP")
             reentry_ok = bool(
                 signal_candle_body_ok
                 and touched_st
@@ -1848,8 +1909,49 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
             < int(CONFIG.get("max_loss_stop_reentries_per_day", 1))
         )
     )
-    allow_buy = regular_buy or reentry_allowed
-    signal = "BUY_REENTRY" if reentry_allowed else ("BUY" if regular_buy else "NO_SIGNAL")
+    rejection_reasons = []
+    if reentry_candidate is None and not regular_buy and not down_flip:
+        if not allow_flip:
+            rejection_reasons.append(
+                "NO_FLIP_IN_CONFIRMATION_WINDOW" if trend == "up" else "SUPERTREND_DOWN"
+            )
+        else:
+            if not signal_candle_body_ok:
+                rejection_reasons.append(
+                    f"CANDLE_BODY_LIMIT({abs(close_price - entry_open):.2f}>"
+                    f"{float(CONFIG.get('signal_candle_body_limit_points', 30.0)):.2f})"
+                )
+            if not momentum_ok:
+                rejection_reasons.append(f"MOMENTUM({close_price:.2f}<={prev_close:.2f})")
+            if not open_gap_ok:
+                rejection_reasons.append(
+                    f"OPEN_GAP({abs(entry_open - prev_close):.2f}>"
+                    f"{float(CONFIG.get('entry_open_gap_limit_points', 10.0)):.2f})"
+                )
+    elif down_flip and not contract_is_open:
+        rejection_reasons.append("NO_OPEN_POSITION_FOR_SELL")
+    elif reentry_candidate is not None and not reentry_allowed:
+        rejection_reasons.extend(reentry_blockers)
+        side = candle_to_side.get(candle_symbol)
+        if reentry_ok and side_cooldown_tracker.get(side, 0) > 0:
+            rejection_reasons.append("SIDE_COOLDOWN")
+        if reentry_ok and reentries_today.get(side, 0) >= int(CONFIG.get("max_reentries_per_day", 2)):
+            rejection_reasons.append("MAX_REENTRIES_PER_DAY")
+        if (
+            reentry_ok
+            and reentry_candidate.get("loss_stop")
+            and loss_stop_reentries_today.get(side, 0)
+            >= int(CONFIG.get("max_loss_stop_reentries_per_day", 1))
+        ):
+            rejection_reasons.append("MAX_LOSS_STOP_REENTRIES_PER_DAY")
+
+    order_eligible = regular_buy or reentry_allowed
+    signal = (
+        "BUY_REENTRY" if reentry_allowed
+        else ("BUY" if allow_flip else ("SELL" if sell_signal else "NO_SIGNAL"))
+    )
+    if signal == "BUY_REENTRY":
+        signal_event_time = str(df["date"].iloc[closed_idx])
 
     if CONFIG.get("DEBUG") and not any(
         pos.get("status") == "OPEN" and int(pos.get("qty", 0) or 0) > 0
@@ -1862,7 +1964,17 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
             f"Close={close_price:.2f} PrevClose={prev_close:.2f} Open={entry_open:.2f} ST={st_txt}"
         )
 
-    return allow_buy, close_price, entry_open, entry_low, st_value, trend, signal
+    return (
+        order_eligible,
+        close_price,
+        entry_open,
+        entry_low,
+        st_value,
+        trend,
+        signal,
+        rejection_reasons,
+        signal_event_time,
+    )
 
 
 def update_cooldowns_once_per_candle():
@@ -1950,7 +2062,7 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, strategy_signal_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
@@ -1964,6 +2076,7 @@ def live_signal_loop():
                 exit_attempt_tracker = {}
                 exit_reason_tracker = {}
                 buy_signal_attempt_tracker = {}
+                strategy_signal_tracker = {}
                 debug_signal_positions = {}
                 debug_last_max_check_at = {}
                 pullback_reentry_tracker = {}
@@ -2134,16 +2247,16 @@ def live_signal_loop():
                                 f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )
-                            track_debug_buy_signal(
-                                candle_symbol,
-                                order_symbol,
-                                ce_snapshot.get("last_price"),
-                                idx_time,
-                                entry_candle_open=ce_snapshot.get("entry_open"),
-                                entry_candle_low=ce_snapshot.get("entry_low"),
-                                strike=ce_snapshot.get("strike"),
-                            )
                             if session_state == "entry":
+                                track_debug_buy_signal(
+                                    candle_symbol,
+                                    order_symbol,
+                                    ce_snapshot.get("last_price"),
+                                    idx_time,
+                                    entry_candle_open=ce_snapshot.get("entry_open"),
+                                    entry_candle_low=ce_snapshot.get("entry_low"),
+                                    strike=ce_snapshot.get("strike"),
+                                )
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,
@@ -2174,16 +2287,16 @@ def live_signal_loop():
                                 f"OrderPlaced={'YES' if session_state == 'entry' and live_entry_allowed_by_daily_limits() else 'NO'}",
                                 flush=True,
                             )
-                            track_debug_buy_signal(
-                                candle_symbol,
-                                order_symbol,
-                                pe_snapshot.get("last_price"),
-                                idx_time,
-                                entry_candle_open=pe_snapshot.get("entry_open"),
-                                entry_candle_low=pe_snapshot.get("entry_low"),
-                                strike=pe_snapshot.get("strike"),
-                            )
                             if session_state == "entry":
+                                track_debug_buy_signal(
+                                    candle_symbol,
+                                    order_symbol,
+                                    pe_snapshot.get("last_price"),
+                                    idx_time,
+                                    entry_candle_open=pe_snapshot.get("entry_open"),
+                                    entry_candle_low=pe_snapshot.get("entry_low"),
+                                    strike=pe_snapshot.get("strike"),
+                                )
                                 place_buy_order(
                                     candle_symbol,
                                     order_symbol,

@@ -1180,7 +1180,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         if has_open_position_now:
             print_open_position_risk_levels(idx_time)
         else:
-            print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA")
+            print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA PnL=NA")
         return {
             "ok": ok,
             "last_price": None,
@@ -1206,7 +1206,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
         print(
             f"[OPTION] {candle_symbol} Price={last_price:.2f} Open={open_text} Low={low_text} ST={st_text} "
             f"Signal={signal} Direction={dir_text}"
-            f"{' Reason=' + ','.join(rejection_reasons) if rejection_reasons else ''}"
+            f"{' Reason=' + ','.join(rejection_reasons) if rejection_reasons else ''} PnL=NA"
         )
     return {
         "ok": ok,
@@ -1245,11 +1245,6 @@ def print_open_position_risk_levels(idx_time):
         lsl = float(pos.get("stop_loss_price", 0) or 0)
         mx = entry_price + float(CONFIG.get("max_profit_booking_points", 0) or 0)
         tsl = float(pos.get("trailing_stop_price", entry_price) or entry_price)
-        mode = (
-            "PAPER"
-            if pos.get("paper_only") or not CONFIG.get("enable_actual_trade", True)
-            else "LIVE"
-        )
         pnl_text = (
             f"{(float(current_price) - entry_price) * qty:.2f}"
             if current_price is not None and entry_price > 0 and qty > 0
@@ -1266,8 +1261,8 @@ def print_open_position_risk_levels(idx_time):
             else "INACTIVE"
         )
         print(
-            f"[{idx_time}] [POSITION RISK] {symbol} | Mode={mode} "
-            f"Qty={qty} {current_price_text} UnrealizedPnL={pnl_text} "
+            f"[{idx_time}] [POSITION RISK] {symbol} | {current_price_text} "
+            f"UnrealizedPnL={pnl_text} "
             f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
         )
 

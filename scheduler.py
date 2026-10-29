@@ -77,7 +77,7 @@ SCRIPTS_SCHEDULE = {
         "run_time_start": "09:30",  # IST
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
-        "send_signal_emails": True,  # Email alerts on buy/sell signals
+        "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
     },
     
     "SENSEXINTRA": {
@@ -89,7 +89,7 @@ SCRIPTS_SCHEDULE = {
         "run_time_start": "09:30",
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
-        "send_signal_emails": True,  # Email alerts on buy/sell signals
+        "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
     },
 
     "320trade": {

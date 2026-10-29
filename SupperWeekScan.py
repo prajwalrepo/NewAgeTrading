@@ -444,9 +444,8 @@ WATCHLIST = [
 ]
 
 MAX_WEEKLY_HISTORY_DAYS = 180
-MULTIPLIER = 3.0
-ATR_PERIOD = 7
-SMA_PERIOD = 20
+ATR_PERIOD = 10
+FACTOR = 3.0
 
 
 def _normalize_access_token(token_value):
@@ -553,14 +552,29 @@ def safe_get_weekly_data(symbol: str):
 
         # Groww enforces a maximum lookback for 1-week candles. Keep only the recent bars
         # needed by the weekly Supertrend calculation to avoid extra stale history.
-        return df.tail(max(30, ATR_PERIOD + SMA_PERIOD + 5))
+        return df.tail(max(30, ATR_PERIOD + 5))
     except Exception as exc:  # pragma: no cover - network / API failure path
         print(f"[ERROR] Failed to fetch weekly data for {symbol}: {exc}")
         return None
 
 
-def calculate_supertrend_proxy(df: pd.DataFrame):
-    """Simplified weekly Supertrend signal using only the recent required candles."""
+def wilder_rma(series: pd.Series, period: int):
+    """Calculate Wilder's smoothed moving average, matching the NIFTY strategy."""
+    result = [np.nan] * len(series)
+    values = series.to_numpy()
+    if period < 1 or len(values) < period:
+        return pd.Series(result, index=series.index)
+
+    initial_average = np.nanmean(values[:period])
+    result[period - 1] = initial_average
+    for index in range(period, len(values)):
+        previous = result[index - 1] if not np.isnan(result[index - 1]) else initial_average
+        result[index] = (previous * (period - 1) + values[index]) / period
+    return pd.Series(result, index=series.index)
+
+
+def calculate_supertrend(df: pd.DataFrame):
+    """Calculate weekly Supertrend and return only direction-flip signals."""
     if df is None or df.empty:
         return None, None
 
@@ -569,36 +583,70 @@ def calculate_supertrend_proxy(df: pd.DataFrame):
     work["Low"] = pd.to_numeric(work["low"], errors="coerce")
     work["Close"] = pd.to_numeric(work["close"], errors="coerce")
     work = work.dropna(subset=["High", "Low", "Close"]).reset_index(drop=True)
-    if work.empty:
+    if len(work) < ATR_PERIOD + 2:
         return None, None
 
-    effective_atr = min(ATR_PERIOD, max(3, len(work) - 1))
-    effective_sma = min(SMA_PERIOD, max(5, len(work) - 1))
-    if len(work) < max(5, effective_atr):
-        return None, work.iloc[-1] if not work.empty else None
+    hl2 = (work["High"] + work["Low"]) / 2
+    true_range = pd.concat(
+        [
+            work["High"] - work["Low"],
+            (work["High"] - work["Close"].shift()).abs(),
+            (work["Low"] - work["Close"].shift()).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = wilder_rma(true_range, ATR_PERIOD)
+    basic_upperband = hl2 + FACTOR * atr
+    basic_lowerband = hl2 - FACTOR * atr
+    final_upperband = np.full(len(work), np.nan)
+    final_lowerband = np.full(len(work), np.nan)
+    supertrend_values = np.full(len(work), np.nan)
+    direction = np.full(len(work), -1)
+    close = work["Close"].to_numpy()
+    atr_values = atr.to_numpy()
+    upper_values = basic_upperband.to_numpy()
+    lower_values = basic_lowerband.to_numpy()
 
-    work["TR"] = np.maximum(
-        work["High"] - work["Low"],
-        np.maximum(
-            (work["High"] - work["Close"].shift(1)).abs(),
-            (work["Low"] - work["Close"].shift(1)).abs(),
-        ),
-    )
-    work["ATR"] = work["TR"].rolling(window=effective_atr, min_periods=effective_atr).mean()
-    work["Band"] = ((work["High"] + work["Low"]) / 2.0) + MULTIPLIER * work["ATR"]
-    work["SMA"] = work["Close"].rolling(window=effective_sma, min_periods=effective_sma).mean()
+    for index in range(len(work)):
+        if np.isnan(atr_values[index]):
+            continue
+        if index == 0 or np.isnan(atr_values[index - 1]):
+            final_upperband[index] = upper_values[index]
+            final_lowerband[index] = lower_values[index]
+            supertrend_values[index] = final_upperband[index]
+            continue
 
-    if len(work) < 2:
-        return None, work.iloc[-1]
+        previous_close = close[index - 1]
+        final_upperband[index] = (
+            upper_values[index]
+            if upper_values[index] < final_upperband[index - 1]
+            or previous_close > final_upperband[index - 1]
+            else final_upperband[index - 1]
+        )
+        final_lowerband[index] = (
+            lower_values[index]
+            if lower_values[index] > final_lowerband[index - 1]
+            or previous_close < final_lowerband[index - 1]
+            else final_lowerband[index - 1]
+        )
 
+        if direction[index - 1] == -1:
+            direction[index] = 1 if close[index] > final_upperband[index] else -1
+        else:
+            direction[index] = -1 if close[index] < final_lowerband[index] else 1
+        supertrend_values[index] = (
+            final_lowerband[index] if direction[index] == 1 else final_upperband[index]
+        )
+
+    work["Supertrend"] = supertrend_values
+    work["Direction"] = direction
     last = work.iloc[-1]
-    prev = work.iloc[-2]
+    previous = work.iloc[-2]
     signal = None
-
-    if pd.notna(last["Close"]) and pd.notna(last["Band"]) and pd.notna(last["SMA"]):
-        if last["Close"] > prev["Band"] and last["Close"] > last["SMA"]:
+    if pd.notna(last["Supertrend"]) and pd.notna(previous["Supertrend"]):
+        if last["Direction"] == 1 and previous["Direction"] == -1:
             signal = "BUY"
-        elif last["Close"] < prev["Band"] and last["Close"] < last["SMA"]:
+        elif last["Direction"] == -1 and previous["Direction"] == 1:
             signal = "SELL"
 
     return signal, last
@@ -628,34 +676,35 @@ def scan_weekly_supertrend():
         data = safe_get_weekly_data(symbol)
         if data is None or data.empty:
             print(
-                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | ST_PROXY=NA | SIGNAL=NO_DATA",
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | SUPERTREND=NA | SIGNAL=NO_DATA",
                 flush=True,
             )
             continue
 
-        signal, latest = calculate_supertrend_proxy(data)
+        signal, latest = calculate_supertrend(data)
         if latest is None:
             print(
-                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | ST_PROXY=NA | SIGNAL=INSUFFICIENT_DATA",
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | SUPERTREND=NA | SIGNAL=INSUFFICIENT_DATA",
                 flush=True,
             )
             continue
 
         price = latest.get("Close")
-        st_value = latest.get("Band")
+        st_value = latest.get("Supertrend")
+        direction_text = "UP" if latest.get("Direction") == 1 else "DOWN"
         price_text = f"{float(price):.2f}" if pd.notna(price) else "NA"
         st_text = f"{float(st_value):.2f}" if pd.notna(st_value) else "NA"
         signal_text = signal or "NO_SIGNAL"
         print(
             f"[SCAN] {index}/{total} {symbol} | PRICE={price_text} | "
-            f"ST_PROXY={st_text} | SIGNAL={signal_text}",
+            f"SUPERTREND={st_text} | DIRECTION={direction_text} | SIGNAL={signal_text}",
             flush=True,
         )
 
         if signal is None:
             continue
 
-        reason = f"Weekly Supertrend proxy {signal} on {symbol}"
+        reason = f"Weekly Supertrend flip {signal} on {symbol}"
         price = float(price)
         signal_time = pd.Timestamp(latest["date"]).to_pydatetime()
         results.append((symbol, signal, price, reason, signal_time))

@@ -39,7 +39,7 @@
       "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 0,
-      "send_signal_emails": true,
+      "send_signal_emails": false,
       "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
     },
 
@@ -51,7 +51,7 @@
       "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 10,
-      "send_signal_emails": true,
+      "send_signal_emails": false,
       "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
     },
 

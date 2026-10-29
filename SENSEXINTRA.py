@@ -86,6 +86,9 @@ CONFIG = {
     "max_trades_per_day_ce": 5,
     "max_trades_per_day_pe": 5,
     "max_reentries_per_day": 2,
+    "early_live_profit_trade_count": 3,
+    "early_live_profit_threshold_pct": 40.0,
+    "early_live_profit_pause_until": "12:00",
     "consecutive_loss_stop_limit": 3,
     "loss_streak_entry_pause_until": "12:00",
     "max_profit_per_day": 15000,
@@ -205,6 +208,9 @@ trades_today_ce = 0
 trades_today_pe = 0
 daily_realized_pnl = 0.0
 daily_live_trading_halted = False
+live_trade_count = 0
+first_three_live_trade_pnl = 0.0
+first_three_live_profit_pause_active = False
 exit_attempt_tracker = {}
 exit_reason_tracker = {}
 buy_signal_attempt_tracker = {}
@@ -943,6 +949,42 @@ def update_daily_pnl(pnl):
     daily_realized_pnl += float(pnl)
 
 
+def record_initial_live_trade_pnl(pnl, trade_number):
+    global first_three_live_trade_pnl, first_three_live_profit_pause_active
+
+    trade_count = int(CONFIG.get("early_live_profit_trade_count", 3) or 0)
+    if trade_number is None or trade_number > trade_count:
+        return
+
+    first_three_live_trade_pnl += float(pnl)
+    allocation = float(CONFIG.get("allocation_per_trade", 0) or 0)
+    threshold_pct = float(CONFIG.get("early_live_profit_threshold_pct", 40) or 0)
+    profit_threshold = allocation * threshold_pct / 100
+    pause_until = _parse_hhmm(CONFIG.get("early_live_profit_pause_until", "12:00"))
+    now_ist = get_trading_now()
+    if (
+        profit_threshold > 0
+        and first_three_live_trade_pnl >= profit_threshold
+        and now_ist.time() < pause_until
+        and not first_three_live_profit_pause_active
+    ):
+        first_three_live_profit_pause_active = True
+        print(
+            f"[LIVE ENTRY PAUSED] First {trade_count} live trades reached "
+            f"{first_three_live_trade_pnl:.2f} profit (threshold {profit_threshold:.2f}); "
+            f"new live entries paused until {pause_until.strftime('%H:%M')} IST"
+        )
+
+
+def early_live_profit_pause_active(now_ist=None):
+    if not first_three_live_profit_pause_active:
+        return False
+    if now_ist is None:
+        now_ist = get_trading_now()
+    pause_until = _parse_hhmm(CONFIG.get("early_live_profit_pause_until", "12:00"))
+    return now_ist.time() < pause_until
+
+
 def record_closed_trade_loss_streak(reason, pnl):
     global consecutive_loss_stop_exits, loss_streak_entry_pause_until
     if str(reason or "").upper().startswith("LSL") and float(pnl) < 0:
@@ -971,6 +1013,7 @@ def live_entry_allowed_by_daily_limits():
         and not daily_live_trading_halted
         and not (max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit)
         and not (max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit)
+        and not early_live_profit_pause_active()
     )
 
 
@@ -1345,7 +1388,7 @@ def check_trailing_stop_exit():
 
 
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None, is_reentry=False):
-    global daily_live_trading_halted
+    global daily_live_trading_halted, live_trade_count
     try:
         now_ist = get_trading_now()
         entry_cutoff = _parse_hhmm(CONFIG.get("entry_window_end", "15:15"))
@@ -1393,6 +1436,13 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             print(
                 f"[LIVE ENTRY BLOCKED] Daily loss limit reached: "
                 f"{daily_realized_pnl:.2f} <= -{max_loss_limit:.2f}; tracking paper trade"
+            )
+        if daily_limit_reason is None and early_live_profit_pause_active(now_ist):
+            daily_limit_reason = "FIRST_THREE_LIVE_TRADE_PROFIT_PAUSE"
+            pause_until = _parse_hhmm(CONFIG.get("early_live_profit_pause_until", "12:00"))
+            print(
+                f"[LIVE ENTRY BLOCKED] First-three-trade profit pause active until "
+                f"{pause_until.strftime('%H:%M')} IST; tracking paper trade"
             )
         paper_only = not actual_trade_enabled or daily_limit_reason is not None
 
@@ -1466,6 +1516,11 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             order_id = None
             exec_price = float(price)
 
+        live_trade_number = None
+        if not paper_only:
+            live_trade_count += 1
+            live_trade_number = live_trade_count
+
         candle_low = float(entry_candle_low if entry_candle_low is not None else entry_candle_open)
         loss_stop_pips = float(CONFIG.get("loss_stop_points", CONFIG.get("stop_loss_points", 0)) or 0)
         trail_gap = _trailing_stop_gap_for_entry(exec_price)
@@ -1482,6 +1537,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             "strike": strike,
             "paper_only": paper_only,
             "paper_reason": daily_limit_reason,
+            "live_trade_number": live_trade_number,
             "highest_price": exec_price,
             "stop_loss_price": candle_low - loss_stop_pips,
             "trailing_sl_activated": False,
@@ -1596,6 +1652,8 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
         print(f"[{ts}] [TRADE RESULT] Script=SENSEXINTRA Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
         update_daily_pnl(pnl)
+        if actual_trade_enabled:
+            record_initial_live_trade_pnl(pnl, pos.get("live_trade_number"))
         record_closed_trade_loss_streak(reason, pnl)
         positions[candle_symbol]["status"] = "CLOSED"
         positions[candle_symbol]["exit_price"] = exec_price
@@ -2033,7 +2091,7 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, strategy_signal_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, live_trade_count, first_three_live_trade_pnl, first_three_live_profit_pause_active, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, strategy_signal_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
@@ -2042,6 +2100,9 @@ def live_signal_loop():
                 trades_today_pe = 0
                 daily_realized_pnl = 0.0
                 daily_live_trading_halted = False
+                live_trade_count = 0
+                first_three_live_trade_pnl = 0.0
+                first_three_live_profit_pause_active = False
                 consecutive_loss_stop_exits = 0
                 loss_streak_entry_pause_until = None
                 exit_attempt_tracker = {}

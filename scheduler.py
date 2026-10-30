@@ -74,7 +74,7 @@ SCRIPTS_SCHEDULE = {
         "description": "NIFTY Intraday FNO Strategy with 15:15 IST square-off",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "09:30",  # IST
+        "run_time_start": "09:13",  # IST
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
         "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
@@ -86,7 +86,7 @@ SCRIPTS_SCHEDULE = {
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": None,  # Every day of month
-        "run_time_start": "09:30",
+        "run_time_start": "09:13",
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
         "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
@@ -1139,7 +1139,11 @@ def email_daily_trade_summary(run_context, reason):
         "<h3>Trade details</h3>"
         + _trade_rows_html(_trade_report_rows(report_path))
     ]
-    if str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}:
+    if str(run_context.get("config_key") or "").upper() in {
+        "NIFTYINTRA",
+        "SENSEXINTRA",
+        "NATGASMINI",
+    }:
         try:
             outcomes = _completed_trade_outcomes(report_path)
             wins = sum(pnl > 0 for pnl in outcomes)

@@ -1106,7 +1106,15 @@ def verify_order_execution(order_id, symbol, fallback_price=None):
         return None, None, None
 
 
-def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry_candle_low=None, strike=None):
+def place_buy_order(
+    candle_symbol,
+    order_symbol,
+    price,
+    entry_candle_open,
+    entry_candle_low=None,
+    strike=None,
+    reason="Supertrend flip entry",
+):
     try:
         side = candle_to_side.get(candle_symbol, "CE")
         actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
@@ -1189,6 +1197,14 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry
         clear_pullback_reentry(candle_symbol)
         state = "BUY CONFIRMED" if actual_trade_enabled else "PAPER BUY TRACKED"
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [{state}] {candle_symbol} Qty={int(qty)} Price={exec_price:.2f}")
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Script=NATGASMINI Side=BUY Time={signal_time} "
+            f"Symbol={candle_symbol} Strike={strike if strike is not None else 'NA'} "
+            f"Price={exec_price:.2f} Qty={int(qty)} "
+            f"Reason={reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            flush=True,
+        )
         return order_id
     except Exception as exc:
         print(f"[ERROR] BUY {candle_symbol}: {exc}")
@@ -1258,14 +1274,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         if candle_symbol not in positions or positions[candle_symbol].get("status") != "OPEN":
             return None
 
-        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
         strike = positions[candle_symbol].get("strike", "NA")
-        print(
-            f"[TRADE SIGNAL] Script=NATGASMINI Side=SELL Time={signal_time} Symbol={candle_symbol} "
-            f"Strike={strike} Price={float(price):.2f} Reason={reason} "
-            f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', True) else 'NO'}",
-            flush=True,
-        )
         live_qty = int(positions[candle_symbol].get("qty", 0))
         qty_units = live_qty if qty is None else min(int(qty), live_qty)
         if qty_units <= 0:
@@ -1294,6 +1303,15 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 
         entry_price = float(positions[candle_symbol].get("entry_price", exec_price))
         pnl = (exec_price - entry_price) * qty_units
+        signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+        print(
+            f"[TRADE SIGNAL] Script=NATGASMINI Side=SELL Time={signal_time} "
+            f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
+            f"Qty={qty_units} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} "
+            f"PnL={pnl:.2f} Reason={reason} "
+            f"OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            flush=True,
+        )
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [TRADE RESULT] Script=NATGASMINI Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
         positions[candle_symbol]["status"] = "CLOSED"
@@ -1421,7 +1439,7 @@ def live_signal_loop():
                         else:
                             signal_time = str(idx_time).replace(" ", "T", 1)
                             print(
-                                f"[TRADE SIGNAL] Script=NATGASMINI Side=SELL Time={signal_time} "
+                                f"[STRATEGY SIGNAL] Script=NATGASMINI Side=SELL Time={signal_time} "
                                 f"Symbol={signal_symbol} Strike={debug_position.get('strike', 'NA')} "
                                 f"Price={float(exit_price):.2f} Reason=DIRECTION_CHANGE OrderPlaced=NO",
                                 flush=True,
@@ -1437,17 +1455,10 @@ def live_signal_loop():
                     print(f"[{idx_time}] [SIGNAL] NATGASMINI {side} {signal_symbol} Close={close_price:.2f} ST={snapshot.get('st_value') if snapshot.get('st_value') is not None else 'NA'}")
                     if snapshot.get("signal") == "BUY_REENTRY":
                         print(f"[{idx_time}] [REENTRY SIGNAL] {signal_symbol} same strike pullback continuation")
-                    signal_time = str(idx_time).replace(" ", "T", 1)
                     signal_reason = (
                         "pullback re-entry continuation"
                         if snapshot.get("signal") == "BUY_REENTRY"
                         else "Supertrend flip entry"
-                    )
-                    print(
-                        f"[TRADE SIGNAL] Script=NATGASMINI Side=BUY Time={signal_time} Symbol={signal_symbol} "
-                        f"Strike={snapshot.get('strike', 'NA')} Price={float(close_price):.2f} Reason={signal_reason} "
-                        f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
-                        flush=True,
                     )
                     if CONFIG.get("debug_signal_tracking_enabled", False):
                         debug_signal_positions[signal_symbol] = {
@@ -1465,7 +1476,15 @@ def live_signal_loop():
                         clear_pullback_reentry(signal_symbol)
                         print(f"[{idx_time}] [DEBUG BUY SIGNAL TRACKED] {signal_symbol} OrderSymbol={order_symbol} Price={float(close_price):.2f} Side={side}")
                     if session_state == "entry":
-                        place_buy_order(signal_symbol, order_symbol, float(close_price), float(entry_open), entry_candle_low=float(entry_low), strike=snapshot.get("strike"))
+                        place_buy_order(
+                            signal_symbol,
+                            order_symbol,
+                            float(close_price),
+                            float(entry_open),
+                            entry_candle_low=float(entry_low),
+                            strike=snapshot.get("strike"),
+                            reason=signal_reason,
+                        )
 
             for symbol in list(positions.keys()):
                 if positions[symbol].get("status") != "OPEN":

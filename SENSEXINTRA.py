@@ -86,6 +86,8 @@ CONFIG = {
     "max_trades_per_day_ce": 5,
     "max_trades_per_day_pe": 5,
     "max_reentries_per_day": 2,
+    # One 10:00-11:00 CE-PE-CE or PE-CE-PE Supertrend runner; normal limits apply.
+    "super_run_enabled": True,
     "early_live_profit_trade_count": 3,
     "early_live_profit_threshold_pct": 40.0,
     "early_live_profit_pause_until": "12:00",
@@ -232,6 +234,14 @@ candle_to_side = {}
 order_expiry_to_candle_expiry = {}
 loop_candle_cache = {}
 loop_price_cache = {}
+super_run_state = {
+    "closed_trade_sides": [],
+    "pending_side": None,
+    "used": False,
+    "disqualified": False,
+    "profit_pause_before_10": False,
+    "loss_pause_before_10": False,
+}
 
 def clear_loop_market_cache():
     loop_candle_cache.clear()
@@ -879,6 +889,79 @@ def increment_trade_count(candle_symbol):
         trades_today_pe += 1
 
 
+def _record_super_run_pause_trigger(pause_key, now_ist):
+    if not CONFIG.get("super_run_enabled") or now_ist.time() >= dt_time(10, 0):
+        return
+
+    super_run_state[pause_key] = True
+    if (
+        super_run_state["profit_pause_before_10"]
+        and super_run_state["loss_pause_before_10"]
+        and not super_run_state["disqualified"]
+    ):
+        super_run_state["disqualified"] = True
+        super_run_state["pending_side"] = None
+        print("[ST_Runner DISABLED] Both entry pauses were triggered before 10:00 IST")
+
+
+def _record_super_run_trade_exit(position, candle_symbol):
+    if (
+        not CONFIG.get("super_run_enabled")
+        or super_run_state["used"]
+        or super_run_state["pending_side"] is not None
+        or len(super_run_state["closed_trade_sides"]) >= 2
+        or position.get("is_super_run")
+    ):
+        return
+
+    side = position.get("side") or candle_to_side.get(candle_symbol)
+    if side not in {"CE", "PE"}:
+        return
+
+    closed_sides = super_run_state["closed_trade_sides"]
+    closed_sides.append(side)
+    if len(closed_sides) != 2:
+        return
+
+    first_side, second_side = closed_sides
+    if first_side == second_side:
+        return
+    if super_run_state["disqualified"]:
+        print("[ST_Runner DISABLED] Both entry pauses were triggered before 10:00 IST")
+        return
+
+    super_run_state["pending_side"] = first_side
+    print(
+        f"[ST_Runner READY] Closed sequence={first_side}-{second_side}; "
+        f"one {first_side} Supertrend entry may qualify from 10:00 to 11:00 IST"
+    )
+
+
+def _get_super_run_entry_side(now_ist=None):
+    if (
+        not CONFIG.get("super_run_enabled")
+        or super_run_state["used"]
+        or super_run_state["disqualified"]
+        or super_run_state["pending_side"] is None
+    ):
+        return None
+
+    now_ist = now_ist or get_trading_now()
+    if not (dt_time(10, 0) <= now_ist.time() < dt_time(11, 0)):
+        return None
+    return super_run_state["pending_side"]
+
+
+def _record_super_run_entry(is_super_run):
+    if not CONFIG.get("super_run_enabled"):
+        return
+    if is_super_run:
+        super_run_state["used"] = True
+        super_run_state["pending_side"] = None
+    elif super_run_state["pending_side"] is not None:
+        super_run_state["pending_side"] = None
+
+
 def place_order_with_retry(trading_symbol, quantity, transaction_type, product_type=None):
     if product_type is None:
         product_type = growwapi.PRODUCT_MIS
@@ -969,6 +1052,7 @@ def record_initial_live_trade_pnl(pnl, trade_number):
         and not first_three_live_profit_pause_active
     ):
         first_three_live_profit_pause_active = True
+        _record_super_run_pause_trigger("profit_pause_before_10", now_ist)
         print(
             f"[LIVE ENTRY PAUSED] First {trade_count} live trades reached "
             f"{first_three_live_trade_pnl:.2f} profit (threshold {profit_threshold:.2f}); "
@@ -999,6 +1083,7 @@ def record_closed_trade_loss_streak(reason, pnl):
         pause_until = datetime.combine(now_ist.date(), pause_until_time, tzinfo=now_ist.tzinfo)
         if now_ist < pause_until:
             loss_streak_entry_pause_until = pause_until
+            _record_super_run_pause_trigger("loss_pause_before_10", now_ist)
             print(
                 f"[ENTRY PAUSED] {consecutive_loss_stop_exits} consecutive loss-stop exits; "
                 f"new entries paused until {pause_until.strftime('%H:%M')} IST"
@@ -1014,6 +1099,10 @@ def live_entry_allowed_by_daily_limits():
         and not (max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit)
         and not (max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit)
         and not early_live_profit_pause_active()
+        and not (
+            loss_streak_entry_pause_until is not None
+            and get_trading_now() < loss_streak_entry_pause_until
+        )
     )
 
 
@@ -1382,7 +1471,17 @@ def check_trailing_stop_exit():
             )
 
 
-def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=None, entry_candle_low=None, strike=None, is_reentry=False):
+def place_buy_order(
+    candle_symbol,
+    order_symbol,
+    price,
+    entry_candle_open,
+    qty=None,
+    entry_candle_low=None,
+    strike=None,
+    is_reentry=False,
+    is_super_run=False,
+):
     global daily_live_trading_halted, live_trade_count
     try:
         now_ist = get_trading_now()
@@ -1442,6 +1541,11 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         paper_only = not actual_trade_enabled or daily_limit_reason is not None
 
         side = candle_to_side.get(candle_symbol)
+        if is_super_run and (
+            is_reentry or _get_super_run_entry_side(now_ist) != side
+        ):
+            print(f"[ST_Runner BLOCKED] {candle_symbol}: runner eligibility expired")
+            return None
         if is_reentry and side_cooldown_tracker.get(side, 0) > 0:
             print(f"[REENTRY BLOCKED] {candle_symbol}: {side_cooldown_tracker.get(side)}-candle cooldown active")
             return None
@@ -1529,6 +1633,8 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             "order_symbol": order_symbol,
             "product_type": "MIS",
             "side": candle_to_side.get(candle_symbol),
+            "is_super_run": bool(is_super_run),
+            "is_reentry": bool(is_reentry),
             "strike": strike,
             "paper_only": paper_only,
             "paper_reason": daily_limit_reason,
@@ -1546,6 +1652,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
                 loss_stop_reentries_today[side] = loss_stop_reentries_today.get(side, 0) + 1
         else:
             increment_trade_count(candle_symbol)
+        _record_super_run_entry(is_super_run)
         clear_pullback_reentry(candle_symbol)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         current_price = _get_cached_price(candle_symbol)
@@ -1568,7 +1675,7 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
             f"Strike={strike if strike is not None else 'NA'} Time={signal_time} "
             f"Symbol={candle_symbol} "
             f"Price={exec_price:.2f} Qty={int(qty)} "
-            f"Reason={'pullback re-entry continuation' if is_reentry else 'Supertrend flip entry'} "
+            f"Reason={'ST_Runner' if is_super_run else ('pullback re-entry continuation' if is_reentry else 'Supertrend flip entry')} "
             f"OrderPlaced={'YES' if not paper_only else 'NO'}",
             flush=True,
         )
@@ -1634,6 +1741,9 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 
         entry_price = float(pos.get("entry_price", exec_price))
         pnl = (exec_price - entry_price) * qty_units
+        log_reason = reason
+        if pos.get("is_super_run") and "ST_Runner" not in str(reason):
+            log_reason = f"ST_Runner: {reason}"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
         print(
@@ -1641,11 +1751,11 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
             f"Qty={qty_units} BuyAt={float(pos.get('entry_price', exec_price)):.2f} "
             f"SellAt={exec_price:.2f} PnL={pnl:.2f} "
-            f"Reason={reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
+            f"Reason={log_reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
             flush=True,
         )
-        print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
-        print(f"[{ts}] [TRADE RESULT] Script=SENSEXINTRA Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
+        print(f"[{ts}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={log_reason} | PnL {pnl:.0f}")
+        print(f"[{ts}] [TRADE RESULT] Script=SENSEXINTRA Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f} Reason={log_reason}")
         update_daily_pnl(pnl)
         if actual_trade_enabled:
             record_initial_live_trade_pnl(pnl, pos.get("live_trade_number"))
@@ -1655,6 +1765,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         positions[candle_symbol]["exit_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         positions[candle_symbol]["pnl"] = pnl
         positions[candle_symbol]["qty"] = 0
+        _record_super_run_trade_exit(pos, candle_symbol)
         side = candle_to_side.get(candle_symbol)
         if allow_reentry:
             arm_pullback_reentry(candle_symbol, reason, exec_price, ts)
@@ -2111,6 +2222,15 @@ def live_signal_loop():
                 reentries_today.update({"CE": 0, "PE": 0})
                 loss_stop_reentries_today.update({"CE": 0, "PE": 0})
                 no_data_warn_tracker = {}
+                super_run_state.clear()
+                super_run_state.update({
+                    "closed_trade_sides": [],
+                    "pending_side": None,
+                    "used": False,
+                    "disqualified": False,
+                    "profit_pause_before_10": False,
+                    "loss_pause_before_10": False,
+                })
                 last_reset_date = current_date
                 if not build_contract_universe():
                     print("[ERROR] Contract configuration invalid after daily rollover")
@@ -2189,12 +2309,20 @@ def live_signal_loop():
                     continue
                 should_exit, exit_price, st_value, exit_signal = option_has_flip_down_exit_signal(symbol, idx_time)
                 if should_exit and exit_signal == "SELL":
-                    print(f"[{idx_time}] [SELL SIGNAL] {symbol} Reason=ST_FLIP")
+                    exit_reason = (
+                        "ST_Runner: ST flip up->down"
+                        if pos.get("is_super_run")
+                        else "ST flip up->down"
+                    )
+                    print(
+                        f"[{idx_time}] [SELL SIGNAL] {symbol} "
+                        f"Reason={'ST_Runner' if pos.get('is_super_run') else 'ST_FLIP'}"
+                    )
                     place_sell_order(
                         symbol,
                         pos.get("order_symbol"),
                         float(exit_price),
-                        reason="ST flip up->down",
+                        reason=exit_reason,
                         qty=pos.get("qty"),
                     )
 
@@ -2254,6 +2382,10 @@ def live_signal_loop():
                     if ce_ok and not has_open_position():
                         candle_symbol = ce_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
+                        is_super_run = (
+                            ce_snapshot.get("signal") == "BUY"
+                            and _get_super_run_entry_side() == "CE"
+                        )
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
                         if order_symbol and last_attempt_time != idx_time:
                             buy_signal_attempt_tracker[candle_symbol] = idx_time
@@ -2261,7 +2393,9 @@ def live_signal_loop():
                                 print(f"[{idx_time}] [REENTRY SIGNAL] {candle_symbol} same strike pullback continuation")
                             signal_time = str(idx_time).replace(" ", "T", 1)
                             signal_reason = (
-                                "pullback re-entry continuation"
+                                "ST_Runner"
+                                if is_super_run
+                                else "pullback re-entry continuation"
                                 if ce_snapshot.get("signal") == "BUY_REENTRY"
                                 else "Supertrend flip entry"
                             )
@@ -2290,10 +2424,15 @@ def live_signal_loop():
                                     entry_candle_low=ce_snapshot.get("entry_low"),
                                     strike=ce_snapshot.get("strike"),
                                     is_reentry=ce_snapshot.get("signal") == "BUY_REENTRY",
+                                    is_super_run=is_super_run,
                                 )
                     if pe_ok and not has_open_position():
                         candle_symbol = pe_snapshot.get("candle_symbol")
                         order_symbol = candle_to_order.get(candle_symbol)
+                        is_super_run = (
+                            pe_snapshot.get("signal") == "BUY"
+                            and _get_super_run_entry_side() == "PE"
+                        )
                         last_attempt_time = buy_signal_attempt_tracker.get(candle_symbol)
                         if order_symbol and last_attempt_time != idx_time:
                             buy_signal_attempt_tracker[candle_symbol] = idx_time
@@ -2301,7 +2440,9 @@ def live_signal_loop():
                                 print(f"[{idx_time}] [REENTRY SIGNAL] {candle_symbol} same strike pullback continuation")
                             signal_time = str(idx_time).replace(" ", "T", 1)
                             signal_reason = (
-                                "pullback re-entry continuation"
+                                "ST_Runner"
+                                if is_super_run
+                                else "pullback re-entry continuation"
                                 if pe_snapshot.get("signal") == "BUY_REENTRY"
                                 else "Supertrend flip entry"
                             )
@@ -2330,6 +2471,7 @@ def live_signal_loop():
                                     entry_candle_low=pe_snapshot.get("entry_low"),
                                     strike=pe_snapshot.get("strike"),
                                     is_reentry=pe_snapshot.get("signal") == "BUY_REENTRY",
+                                    is_super_run=is_super_run,
                                 )
 
             wait_until_next_interval()

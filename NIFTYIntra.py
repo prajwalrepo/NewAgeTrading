@@ -1215,8 +1215,8 @@ def print_open_position_risk_levels(idx_time):
             else "INACTIVE"
         )
         print(
-            f"[{idx_time}] [POSITION RISK] {symbol} | OptionPrice={current_price_text} "
-            f"UnrealizedPnL={pnl_text} "
+            f"[{idx_time}] [POSITION RISK] {symbol} | Price={current_price_text} "
+            f"UPL={pnl_text} "
             f"| LSL@{lsl:.2f} | MX@{mx:.2f} | TSL@{tsl:.2f} ({tsl_state})"
         )
 
@@ -1489,8 +1489,8 @@ def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, qty=N
         )
         print(
             f"[{ts}] [{'BUY CONFIRMED' if not paper_only else 'PAPER BUY TRACKED'}] "
-            f"{candle_symbol} OptionPrice={exec_price:.2f} "
-            f"UnrealizedPnL={unrealized_pnl} Qty={int(qty)}"
+            f"{candle_symbol} Price={exec_price:.2f} "
+            f"UPL={unrealized_pnl} Qty={int(qty)}"
             + (f" OrderID={order_id}" if order_id else "")
         )
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")

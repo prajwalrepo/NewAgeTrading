@@ -78,7 +78,7 @@ CONFIG = {
     "strike_start": 5000,
     "strike_end": 8000,
 
-    "candle_interval": "1M",
+    "candle_interval": "5M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -94,10 +94,10 @@ CONFIG = {
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "entry_window_start": "16:30",
-    "entry_window_end": "22:30",
-    "force_exit_time": "22:30",
-    "expiry_day_force_exit_time": "22:00",
+    "entry_window_start": "09:00",
+    "entry_window_end": "23:00",
+    "force_exit_time": "23:00",
+    "expiry_day_force_exit_time": "23:00",
 
     # Risk
     # Keep entries paper-only until explicitly enabled.

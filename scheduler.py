@@ -110,10 +110,23 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": [],
-        "run_time_start": "16:00",
-        "run_time_end": "23:00",  # MCX trades longer
+        "run_time_start": "09:00",
+        "run_time_end": "23:05",  # Allow the strategy to complete its 23:00 square-off
         "api_delay_seconds": 00,  # Start 60 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
+    },
+
+    "GOLDMINI": {
+        "script_name": "GOLDMINI.py",
+        "description": "Gold Mini Options Strategy",
+        "enabled": True,
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                     DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
+        "run_days_of_month": [23, 24, 25, 26, 27],
+        "run_time_start": "16:00",
+        "run_time_end": "23:00",
+        "api_delay_seconds": 10,
+        "send_signal_emails": True,
     },
     
     "NATGASMINI": {
@@ -123,8 +136,8 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": [],
-        "run_time_start": "16:00",
-        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
+        "run_time_start": "09:00",
+        "run_time_end": "23:05",  # Allow the strategy to complete its 23:00 square-off
         "api_delay_seconds": 00,  # Start 90 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
@@ -592,6 +605,10 @@ def should_script_run_now(script_config):
         if current_day_of_month not in run_days_of_month:
             return False
     # If run_days_of_month is None, allow any day of month
+
+    run_months = script_config.get("run_months")
+    if run_months is not None and now.month not in run_months:
+        return False
     
     # Check if current time is within trading window
     if not (run_start <= current_time <= run_end):
@@ -614,6 +631,9 @@ def seconds_until_next_script_start(now=None):
             continue
         run_days_of_month = script_config.get("run_days_of_month")
         if run_days_of_month is not None and now.day not in run_days_of_month:
+            continue
+        run_months = script_config.get("run_months")
+        if run_months is not None and now.month not in run_months:
             continue
         start_time = parse_time(script_config.get("run_time_start", "00:00"))
         start_at = datetime.combine(now.date(), start_time, tzinfo=now.tzinfo)
@@ -645,6 +665,7 @@ MONTHLY_REPORT_SHEETS = {
     "SENSEXINTRA": "SENSEX",
     "NATGASMINI": "GAS",
     "OILMINI": "OIL",
+    "GOLDMINI": "GOLD",
 }
 TRADE_REPORT_LOCK = threading.Lock()
 
@@ -1373,6 +1394,73 @@ def process_price_milestone(config_key, output_line, script_config=None):
     send_email_notification(subject, body, recipients=recipients)
 
 
+def parse_trade_result(line):
+    """Parse a confirmed trade result containing realized execution details."""
+    if "[TRADE RESULT]" not in line:
+        return None
+
+    fields = {}
+    for match in TRADE_SIGNAL_FIELD_PATTERN.finditer(line):
+        start = match.end()
+        next_match = TRADE_SIGNAL_FIELD_PATTERN.search(line, start)
+        end = next_match.start() if next_match else len(line)
+        fields[match.group(1)] = line[start:end].strip()
+
+    required_fields = ("Script", "Side", "Symbol", "Strike", "BuyAt", "SellAt", "PnL")
+    if any(not fields.get(field) for field in required_fields):
+        return None
+    if fields["Side"].upper() != "SELL":
+        return None
+
+    return fields
+
+
+def process_trade_result(config_key, output_line, script_config=None):
+    """Email GOLDMINI's realized P&L after a sell has been confirmed."""
+    result = parse_trade_result(output_line)
+    if (
+        result is None
+        or str(config_key).upper() != "GOLDMINI"
+        or result["Script"].upper() != "GOLDMINI"
+    ):
+        return
+
+    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
+    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
+    if not send_on_signals or not script_emails_enabled:
+        return
+
+    subject = f"[TRADE CLOSED] GOLDMINI {result['Symbol']} P&L {result['PnL']}"
+    details = (
+        ("Script", result["Script"]),
+        ("Action", "SELL - trade closed"),
+        ("Symbol", result["Symbol"]),
+        ("Strike", result["Strike"]),
+        ("Buy price", result["BuyAt"]),
+        ("Sell price", result["SellAt"]),
+        ("Realized P&L", result["PnL"]),
+        (
+            "Trade mode",
+            "Live order executed" if result.get("OrderPlaced", "").upper() == "YES" else "Paper trade",
+        ),
+    )
+    if result.get("Qty"):
+        details += (("Quantity", result["Qty"]),)
+    body = "GOLDMINI sell confirmed\n\n" + "\n".join(
+        f"{label}: {value}" for label, value in details
+    )
+    rows = "".join(
+        "<tr>"
+        f"<th align='left'>{html.escape(label)}</th>"
+        f"<td>{html.escape(str(value))}</td>"
+        "</tr>"
+        for label, value in details
+    )
+    html_body = f"<html><body><h2>GOLDMINI sell confirmed</h2><table>{rows}</table></body></html>"
+    recipients = script_config.get("email_recipients") if script_config else None
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
+
+
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
     """Read and log script output in real-time"""
     try:
@@ -1388,6 +1476,7 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
                     process_trade_signal(config_key, output, script_config)
+                    process_trade_result(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
@@ -1582,6 +1671,7 @@ def print_schedule():
         end = script_config.get("run_time_end", "N/A")
         delay = script_config.get("api_delay_seconds", 0)
         days_of_month = script_config.get("run_days_of_month")
+        months = script_config.get("run_months")
         
         print(f"\n{config_key:20} {status}")
         print(f"  Script:  {script_config.get('script_name')}")
@@ -1595,6 +1685,8 @@ def print_schedule():
                 print(f"  Of Month: Days {min(days_of_month)}-{max(days_of_month)}")
             else:
                 print(f"  Of Month: Every day")
+            if months is not None:
+                print(f"  Months:  {', '.join(str(month) for month in months)}")
         else:
             print(f"  Of Month: Every day")
         

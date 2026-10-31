@@ -73,12 +73,26 @@
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [10, 11, 12, 13, 14,15, 16, 17],
+      "run_time_start": "09:00",
+      "run_time_end": "23:05",
+      "api_delay_seconds": 10,
+      "send_signal_emails": true,
+      "email_recipients": ["basappafamily6@gmail.com"],
+      "notes": "Order placement is controlled by enable_actual_trade in OILMINI.py. Immediate mail for every generated signal."
+    },
+
+    "GOLDMINI": {
+      "script_name": "GOLDMINI.py",
+      "description": "Gold Mini Options Strategy (MCX)",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_days_of_month": [23, 24, 25, 26, 27],
       "run_time_start": "16:00",
       "run_time_end": "23:00",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Order placement is controlled by enable_actual_trade in OILMINI.py. Immediate mail for every generated signal."
+      "notes": "Enabled to run on weekdays falling on the 23rd-27th of every month. Option expiries are 27NOV26 and 29DEC26; update contract expiries as they change. Paper-only by default."
     },
 
     "NATGASMINI": {
@@ -86,13 +100,13 @@
       "description": "Natural Gas Mini Options Strategy (MCX)",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
-      "run_time_start": "16:00",
-      "run_time_end": "23:35",
+      "run_days_of_month": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 22, 28, 29, 30, 31],
+      "run_time_start": "09:00",
+      "run_time_end": "23:05",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Paper-only by default. Trades 09:00-23:30 IST, squares off at 23:30, checks 1-point option-price milestones once per minute, and sends its daily report after square-off."
+      "notes": "Paper-only by default. Uses 5-minute candles, trades 09:00-23:00 IST with Supertrend-only signals, squares off at 23:00, and sends its daily report after square-off."
     },
 
     "SupperWeekScan": {

@@ -83,8 +83,7 @@ CONFIG = {
     "max_lots_per_trade": 1,
     "allocation_per_trade": 35000,
     "check_margin_before_order": True,
-    "max_trades_per_day_ce": 5,
-    "max_trades_per_day_pe": 5,
+    "max_trades_per_day": 10,
     "max_reentries_per_day": 2,
     # One 10:00-11:00 CE-PE-CE or PE-CE-PE Supertrend runner; normal limits apply.
     "super_run_enabled": True,
@@ -205,8 +204,7 @@ except Exception as exc:
 # Runtime state
 pnl_log_stop_event = threading.Event()
 positions = {}  # {candle_symbol: {...}}
-trades_today_ce = 0
-trades_today_pe = 0
+trades_today = 0
 daily_realized_pnl = 0.0
 daily_live_trading_halted = False
 live_trade_count = 0
@@ -870,24 +868,14 @@ def build_contract_universe():
     return True
 
 
-def check_trade_limit(candle_symbol):
-    side = candle_to_side.get(candle_symbol)
-    if side == "CE":
-        max_trades = int(CONFIG.get("max_trades_per_day_ce", 999))
-        return trades_today_ce < max_trades, trades_today_ce, max_trades
-    if side == "PE":
-        max_trades = int(CONFIG.get("max_trades_per_day_pe", 999))
-        return trades_today_pe < max_trades, trades_today_pe, max_trades
-    return True, 0, 999
+def check_trade_limit():
+    max_trades = int(CONFIG.get("max_trades_per_day", 999))
+    return trades_today < max_trades, trades_today, max_trades
 
 
-def increment_trade_count(candle_symbol):
-    global trades_today_ce, trades_today_pe
-    side = candle_to_side.get(candle_symbol)
-    if side == "CE":
-        trades_today_ce += 1
-    elif side == "PE":
-        trades_today_pe += 1
+def increment_trade_count():
+    global trades_today
+    trades_today += 1
 
 
 def _record_super_run_pause_trigger(pause_key, now_ist):
@@ -1483,7 +1471,7 @@ def place_buy_order(
             return None
 
         if not is_reentry:
-            can_trade, cnt, max_allowed = check_trade_limit(candle_symbol)
+            can_trade, cnt, max_allowed = check_trade_limit()
             if not can_trade:
                 print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
                 return None
@@ -1615,7 +1603,7 @@ def place_buy_order(
             if reentry_candidate.get("loss_stop"):
                 loss_stop_reentries_today[side] = loss_stop_reentries_today.get(side, 0) + 1
         else:
-            increment_trade_count(candle_symbol)
+            increment_trade_count()
         _record_super_run_entry(is_super_run)
         clear_pullback_reentry(candle_symbol)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2087,13 +2075,12 @@ def live_signal_loop():
     while True:
         try:
             clear_loop_market_cache()
-            global trades_today_ce, trades_today_pe, daily_realized_pnl, daily_live_trading_halted, live_trade_count, first_three_live_trade_pnl, first_three_live_profit_pause_active, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
+            global trades_today, daily_realized_pnl, daily_live_trading_halted, live_trade_count, first_three_live_trade_pnl, first_three_live_profit_pause_active, consecutive_loss_stop_exits, loss_streak_entry_pause_until, exit_attempt_tracker, exit_reason_tracker, buy_signal_attempt_tracker, debug_signal_positions, debug_last_max_check_at, pullback_reentry_tracker, side_cooldown_tracker, no_data_warn_tracker
 
             now_ist = get_trading_now()
             current_date = now_ist.strftime("%Y-%m-%d")
             if last_reset_date != current_date:
-                trades_today_ce = 0
-                trades_today_pe = 0
+                trades_today = 0
                 daily_realized_pnl = 0.0
                 daily_live_trading_halted = False
                 live_trade_count = 0

@@ -64,7 +64,7 @@
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Order placement is configured inside 320trade.py. Selects 100-point ITM strikes at 15:15 and starts CE/PE market buys at 15:20. Sends signal emails and a CE/PE result table with Excel workbook after both legs close."
+      "notes": "320trade.py prioritizes SENSEX (live, up to 2 lots per CE/PE leg); NIFTY remains paper-only. Selects 100-point ITM strikes at 15:15 and starts CE/PE tracking at 15:20. Summary email includes closed live and paper legs, exit reason, quantity, and P&L."
     },
 
     "OILMINI": {

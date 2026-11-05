@@ -1014,40 +1014,58 @@ def _320trade_outcome_rows(report_path):
         sheet = workbook["Trades"]
         headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
         indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
-        legs = {}
+        open_buys = {}
+        outcomes = []
         for values in sheet.iter_rows(min_row=2, values_only=True):
             row = {name: values[index] for name, index in indices.items()}
             symbol = str(row["Symbol"] or "")
             side = str(row["Side"] or "").upper()
             if not symbol or side not in {"BUY", "SELL"}:
                 continue
-            legs.setdefault(symbol, {})[side] = row
-
-        outcomes = []
-        for symbol, events in sorted(legs.items()):
-            buy = events.get("BUY")
-            sell = events.get("SELL")
-            if not buy or not sell:
-                continue
             try:
-                buy_price = float(buy["Price"])
-                sell_price = float(sell["Price"])
-                quantity = float(buy["Qty"] or sell["Qty"] or 0)
+                price = float(row["Price"])
+                quantity = float(row["Qty"] or 0)
             except (TypeError, ValueError):
                 continue
-            outcomes.append({
-                "symbol": symbol,
-                "strike": buy["Strike"] or sell["Strike"] or "",
-                "buy_price": buy_price,
-                "sell_time": sell["Time"] or "",
-                "sell_price": sell_price,
-                "quantity": quantity,
-                "pnl": (sell_price - buy_price) * quantity,
-                "order_placed": (
-                    str(buy["Order Placed"] or "").upper() == "YES"
-                    and str(sell["Order Placed"] or "").upper() == "YES"
-                ),
-            })
+            if quantity <= 0:
+                continue
+
+            if side == "BUY":
+                open_buys.setdefault(symbol, []).append({
+                    "row": row,
+                    "remaining": quantity,
+                })
+                continue
+
+            remaining_sell = quantity
+            buys = open_buys.get(symbol, [])
+            while buys and remaining_sell > 0:
+                buy_entry = buys[0]
+                buy = buy_entry["row"]
+                is_live = str(buy["Order Placed"] or "").upper() == "YES"
+                sell_was_placed = str(row["Order Placed"] or "").upper() == "YES"
+                if is_live and not sell_was_placed:
+                    break
+
+                matched_quantity = min(buy_entry["remaining"], remaining_sell)
+                buy_price = float(buy["Price"])
+                mode = "LIVE" if is_live else "PAPER"
+                outcomes.append({
+                    "symbol": symbol,
+                    "strike": buy["Strike"] or row["Strike"] or "",
+                    "buy_price": buy_price,
+                    "sell_time": row["Time"] or "",
+                    "sell_price": price,
+                    "quantity": matched_quantity,
+                    "pnl": (price - buy_price) * matched_quantity,
+                    "mode": mode,
+                    "exit_reason": row["Reason"] or "",
+                    "order_placed": is_live and sell_was_placed,
+                })
+                buy_entry["remaining"] -= matched_quantity
+                remaining_sell -= matched_quantity
+                if buy_entry["remaining"] <= 0:
+                    buys.pop(0)
         return outcomes
     finally:
         workbook.close()
@@ -1064,32 +1082,36 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
         f"Trade signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})",
     ]
     if not outcomes:
-        text.append("No completed CE/PE trade outcomes were recorded.")
+        text.append("No completed live or paper CE/PE trade outcomes were recorded.")
         return "\n".join(text), None
 
     columns = (
-        "Strike", "Buy Price", "Sell Price", "Sell Time", "Quantity", "PnL",
-        "Order Placed",
+        "Mode", "Symbol", "Strike", "Buy Price", "Sell Price", "Sell Time",
+        "Quantity", "PnL", "Exit Reason", "Order Placed",
     )
     text.append("")
     text.append(" | ".join(columns))
     text.append(" | ".join("-" * len(column) for column in columns))
     for row in outcomes:
         text.append(
-            f"{row['strike']} | {row['buy_price']:.2f} | {row['sell_price']:.2f} | "
-            f"{row['sell_time']} | {row['quantity']:g} | {row['pnl']:.2f} | "
+            f"{row['mode']} | {row['symbol']} | {row['strike']} | "
+            f"{row['buy_price']:.2f} | {row['sell_price']:.2f} | {row['sell_time']} | "
+            f"{row['quantity']:g} | {row['pnl']:.2f} | {row['exit_reason']} | "
             f"{'YES' if row['order_placed'] else 'NO'}"
         )
     text.append(f"Total gross P&L (before charges): {sum(row['pnl'] for row in outcomes):.2f}")
 
     table_rows = "".join(
         "<tr>"
+        f"<td>{html.escape(str(row['mode']))}</td>"
+        f"<td>{html.escape(str(row['symbol']))}</td>"
         f"<td>{html.escape(str(row['strike']))}</td>"
         f"<td>{row['buy_price']:.2f}</td>"
         f"<td>{row['sell_price']:.2f}</td>"
         f"<td>{html.escape(str(row['sell_time']))}</td>"
         f"<td>{row['quantity']:g}</td>"
         f"<td>{row['pnl']:.2f}</td>"
+        f"<td>{html.escape(str(row['exit_reason']))}</td>"
         f"<td>{'YES' if row['order_placed'] else 'NO'}</td>"
         "</tr>"
         for row in outcomes

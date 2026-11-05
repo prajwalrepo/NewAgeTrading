@@ -36,7 +36,7 @@ CONFIG = {
     "api_secret": os.getenv("GROWW_API_SECRET", ""),
 
     # Which instrument to trade when both have expiry today.
-    "expiry_priority": ["NIFTY", "SENSEX"],
+    "expiry_priority": ["SENSEX", "NIFTY"],
 
     # Entry / exit schedule in IST.
     "trading_timezone_offset_minutes": 330,
@@ -53,7 +53,7 @@ CONFIG = {
     # Order sizing.
     # Fallback lot size used only if instrument lot size is not configured.
     "lot_size": 1,
-    # Keep True to place real broker orders.
+    # Default live-order setting; instrument settings can opt in individually.
     "enable_actual_trade": False,
     "check_margin_before_order": True,
     # Keep True to continue paper logging when real orders fail.
@@ -65,6 +65,7 @@ CONFIG = {
     # Instrument configuration.
     "nifty": {
         "root": "NIFTY",
+        "enable_actual_trade": False,
         "lot_size": 65,
         "exchange": "NSE",
         "segment": "SEGMENT_FNO",
@@ -83,6 +84,7 @@ CONFIG = {
     },
     "sensex": {
         "root": "SENSEX",
+        "enable_actual_trade": True,
         "lot_size": 20,
         "exchange": "BSE",
         "segment": "SEGMENT_FNO",
@@ -97,7 +99,7 @@ CONFIG = {
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 200.0,
         "stop_loss_percent": 30.0,
-        "max_lots_per_trade": 1,
+        "max_lots_per_trade": 2,
     },
 }
 
@@ -204,6 +206,14 @@ def _resolve_lots_per_trade(instrument_cfg):
     except Exception:
         lots_per_trade = 1
     return max(lots_per_trade, 1)
+
+
+def _actual_trade_enabled(instrument_cfg=None):
+    return bool(
+        (instrument_cfg or {}).get(
+            "enable_actual_trade", CONFIG.get("enable_actual_trade", False)
+        )
+    )
 
 
 def _estimated_pnl(entry_price, current_price, qty):
@@ -617,7 +627,7 @@ def place_buy_order(
         )
         return leg
 
-    if not bool(CONFIG.get("enable_actual_trade", True)):
+    if not _actual_trade_enabled(instrument_cfg):
         log_event(f"[LIVE ORDER DISABLED] {order_symbol} running in paper tracking mode")
         if _paper_tracking_enabled():
             return make_paper_entry("LIVE_ORDER_DISABLED")
@@ -1089,7 +1099,8 @@ def try_open_320trade(state):
     margin_check_enabled = state["instrument_cfg"].get(
         "check_margin_before_order", CONFIG.get("check_margin_before_order", True)
     )
-    if margin_check_enabled and CONFIG.get("enable_actual_trade", True):
+    actual_trade_enabled = _actual_trade_enabled(state["instrument_cfg"])
+    if margin_check_enabled and actual_trade_enabled:
         if not state.get("margin_prechecked"):
             state["available_margin"] = get_available_fno_margin()
             state["margin_prechecked"] = True
@@ -1100,7 +1111,7 @@ def try_open_320trade(state):
     requested_lots = _resolve_lots_per_trade(state["instrument_cfg"])
     lots_to_trade = requested_lots
     paper_reason = None
-    if margin_check_enabled and CONFIG.get("enable_actual_trade", True):
+    if margin_check_enabled and actual_trade_enabled:
         if available_margin is None or available_margin <= 0:
             paper_reason = "MARGIN_UNAVAILABLE"
         else:
@@ -1118,13 +1129,14 @@ def try_open_320trade(state):
 
     if paper_reason:
         log_event(f"[LIVE ORDER BLOCKED] {paper_reason}; tracking both legs at option premiums")
+        paper_qty = lot_size * requested_lots
         ce_leg = _make_paper_leg(
             contracts["ce"]["order_symbol"], ce_price, reason=paper_reason,
-            qty=lot_size, strike=contracts["ce_strike"], lot_size=lot_size,
+            qty=paper_qty, strike=contracts["ce_strike"], lot_size=lot_size,
         )
         pe_leg = _make_paper_leg(
             contracts["pe"]["order_symbol"], pe_price, reason=paper_reason,
-            qty=lot_size, strike=contracts["pe_strike"], lot_size=lot_size,
+            qty=paper_qty, strike=contracts["pe_strike"], lot_size=lot_size,
         )
         _apply_risk_limits(ce_leg, state["instrument_cfg"])
         _apply_risk_limits(pe_leg, state["instrument_cfg"])
@@ -1135,7 +1147,7 @@ def try_open_320trade(state):
             _log_trade_signal(
                 "BUY", contract["order_symbol"], leg["strike"], option_price,
                 f"Expiry straddle entry ({paper_reason})", False,
-                lots=1, lot_size=lot_size, qty=lot_size,
+                lots=requested_lots, lot_size=lot_size, qty=paper_qty,
                 trade_time=leg["entry_time"].replace(" ", "T"),
             )
     else:
@@ -1238,7 +1250,7 @@ def main_loop():
                 and current_time >= margin_precheck_time
                 and current_time < _parse_hhmm(CONFIG["entry_window_start"])
                 and not state.get("margin_prechecked")
-                and CONFIG.get("enable_actual_trade", True)
+                and _actual_trade_enabled(state["instrument_cfg"])
                 and state["instrument_cfg"].get(
                     "check_margin_before_order",
                     CONFIG.get("check_margin_before_order", True),

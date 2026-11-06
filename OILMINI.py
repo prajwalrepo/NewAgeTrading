@@ -78,7 +78,7 @@ CONFIG = {
     "strike_start": 5000,
     "strike_end": 8000,
 
-    "candle_interval": "5M",
+    "candle_interval": "3M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -1067,7 +1067,7 @@ def verify_order_execution(order_id, symbol, fallback_price=None):
 def place_buy_order(candle_symbol, order_symbol, price, entry_candle_open, entry_candle_low=None, strike=None):
     try:
         side = candle_to_side.get(candle_symbol, "CE")
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", False))
         if actual_trade_enabled:
             allowed, cnt, max_allowed = check_trade_limit(side)
             if not allowed:
@@ -1221,7 +1221,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         print(
             f"[TRADE SIGNAL] Script=OILMINI Side=SELL Time={signal_time} Symbol={candle_symbol} "
             f"Strike={strike} Price={float(price):.2f} Reason={reason} "
-            f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', True) else 'NO'}",
+            f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', False) else 'NO'}",
             flush=True,
         )
         live_qty = int(positions[candle_symbol].get("qty", 0))
@@ -1230,7 +1230,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             return None
 
         exit_attempt_tracker[candle_symbol] = now_ts
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", False))
         if actual_trade_enabled:
             resp = place_order_with_retry(order_symbol, qty_units, growwapi.TRANSACTION_TYPE_SELL, growwapi.PRODUCT_MIS)
             order_id = resp.get("groww_order_id")
@@ -1463,7 +1463,7 @@ def live_signal_loop():
                     print(
                         f"[TRADE SIGNAL] Script=OILMINI Side=BUY Time={signal_time} Symbol={signal_symbol} "
                         f"Strike={snapshot.get('strike', 'NA')} Price={float(close_price):.2f} Reason={signal_reason} "
-                        f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', True) else 'NO'}",
+                        f"OrderPlaced={'YES' if session_state == 'entry' and CONFIG.get('enable_actual_trade', False) else 'NO'}",
                         flush=True,
                     )
                     if CONFIG.get("debug_signal_tracking_enabled", False):

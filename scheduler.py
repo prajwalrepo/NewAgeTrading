@@ -71,31 +71,31 @@ class DayOfWeek(Enum):
 SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
-        "description": "NIFTY Intraday FNO Strategy with 15:15 IST square-off",
-        "enabled": True,
-        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "09:13",  # IST
+        "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 15:15 IST square-off",
+        "enabled": False,
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
+        "run_time_start": "09:30",  # IST
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
-        "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
+        "send_signal_emails": True,  # Email every generated buy/sell signal
     },
     
     "SENSEXINTRA": {
         "script_name": "SENSEXINTRA.py",
-        "description": "SENSEX Intraday FNO Strategy with 15:15 IST square-off",
-        "enabled": True,
-        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
+        "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 15:15 IST square-off",
+        "enabled": False,
+        "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
         "run_days_of_month": None,  # Every day of month
-        "run_time_start": "09:13",
+        "run_time_start": "09:30",
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
         "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
-        "send_signal_emails": False,  # Per-signal emails disabled; daily reports remain enabled
+        "send_signal_emails": True,  # Email every generated buy/sell signal
     },
 
     "320trade": {
         "script_name": "320trade.py",
         "description": "Expiry-day 3:20 ITM CE+PE Strategy",
-        "enabled": False,
+        "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_time_start": "15:15",
         "run_time_end": "15:30",
@@ -651,7 +651,7 @@ TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
 )
 PRICE_MILESTONE_FIELDS = (
-    "Script", "Time", "Symbol", "Side", "Entry", "Price", "Move", "Direction",
+    "Script", "Basis", "Time", "Symbol", "Side", "Entry", "Price", "Move", "Direction",
 )
 PRICE_MILESTONE_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(PRICE_MILESTONE_FIELDS) + r")="
@@ -767,8 +767,10 @@ def parse_price_milestone(line):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
         fields[match.group(1)] = line[start:end].strip()
 
-    if any(not fields.get(field) for field in PRICE_MILESTONE_FIELDS):
+    required_fields = tuple(field for field in PRICE_MILESTONE_FIELDS if field != "Basis")
+    if any(not fields.get(field) for field in required_fields):
         return None
+    fields.setdefault("Basis", "OPTION")
     return fields
 
 
@@ -1071,12 +1073,14 @@ def _320trade_outcome_rows(report_path):
         workbook.close()
 
 
-def _320trade_summary_email_content(run_context, reason, report_path, counts):
+def _320trade_summary_email_content(
+    run_context, reason, report_path, counts, title="320trade completed"
+):
     outcomes = _320trade_outcome_rows(report_path)
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     total, buys, sells, orders_placed = counts
     text = [
-        "320trade completed",
+        title,
         f"Trading date: {trading_date}",
         f"Stop reason: {reason}",
         f"Trade signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})",
@@ -1085,6 +1089,9 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
         text.append("No completed live or paper CE/PE trade outcomes were recorded.")
         return "\n".join(text), None
 
+    winning_trades = sum(row["pnl"] > 0 for row in outcomes)
+    losing_trades = sum(row["pnl"] < 0 for row in outcomes)
+    total_pnl = sum(row["pnl"] for row in outcomes)
     columns = (
         "Mode", "Symbol", "Strike", "Buy Price", "Sell Price", "Sell Time",
         "Quantity", "PnL", "Exit Reason", "Order Placed",
@@ -1099,7 +1106,13 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
             f"{row['quantity']:g} | {row['pnl']:.2f} | {row['exit_reason']} | "
             f"{'YES' if row['order_placed'] else 'NO'}"
         )
-    text.append(f"Total gross P&L (before charges): {sum(row['pnl'] for row in outcomes):.2f}")
+    text.extend((
+        "",
+        f"Completed trades: {len(outcomes)}",
+        f"Winning trades: {winning_trades}",
+        f"Losing trades: {losing_trades}",
+        f"Total gross P&L (before charges): {total_pnl:.2f}",
+    ))
 
     table_rows = "".join(
         "<tr>"
@@ -1117,7 +1130,7 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
         for row in outcomes
     )
     html_body = (
-        "<html><body><h2>320trade completed</h2>"
+        f"<html><body><h2>{html.escape(title)}</h2>"
         f"<p>Trading date: {html.escape(trading_date)}<br>"
         f"Stop reason: {html.escape(str(reason))}</p>"
         f"<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
@@ -1125,7 +1138,9 @@ def _320trade_summary_email_content(run_context, reason, report_path, counts):
         + "</tr></thead><tbody>"
         + table_rows
         + "</tbody></table>"
-        f"<p><strong>Total gross P&amp;L (before charges): {sum(row['pnl'] for row in outcomes):.2f}</strong></p>"
+        f"<p>Completed trades: {len(outcomes)}<br>"
+        f"Winning trades: {winning_trades}<br>Losing trades: {losing_trades}<br>"
+        f"<strong>Total gross P&amp;L (before charges): {total_pnl:.2f}</strong></p>"
         f"<p>Signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})</p>"
         "</body></html>"
     )
@@ -1153,13 +1168,19 @@ def email_daily_trade_summary(run_context, reason):
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
     script_config = SCRIPTS_SCHEDULE.get(run_context.get("config_key"), {})
     recipients = script_config.get("email_recipients")
-    if str(run_context.get("config_key") or "").upper() == "320TRADE":
+    config_key_upper = str(run_context.get("config_key") or "").upper()
+    if config_key_upper in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
         body, html_body = _320trade_summary_email_content(
-            run_context, reason, report_path, (total, buys, sells, orders_placed)
+            run_context,
+            reason,
+            report_path,
+            (total, buys, sells, orders_placed),
+            title=f"{run_context['config_key']} completed",
         )
         send_email_notification(
             subject,
             body,
+            attachment_path=report_path,
             html_body=html_body,
             recipients=recipients,
         )
@@ -1398,18 +1419,20 @@ def process_price_milestone(config_key, output_line, script_config=None):
     if not send_on_signals or not script_emails_enabled:
         return
 
+    basis = "Index" if milestone["Basis"].upper() == "INDEX" else "Option"
     subject = (
-        f"[PRICE MOVE] {config_key} {milestone['Symbol']} "
-        f"{milestone['Move']} points ({milestone['Direction']})"
+        f"[PRICE MOVE] {config_key} {basis} {milestone['Move']} points "
+        f"({milestone['Direction']})"
     )
     body = (
-        "Option price milestone\n\n"
+        f"{basis} price milestone\n\n"
         f"Script: {config_key}\n"
+        f"Measurement: {basis}\n"
         f"Time: {milestone['Time']}\n"
         f"Symbol: {milestone['Symbol']}\n"
         f"Side: {milestone['Side']}\n"
-        f"Entry price: {milestone['Entry']}\n"
-        f"Current price: {milestone['Price']}\n"
+        f"Entry {'premium' if basis == 'Option' else 'index level'}: {milestone['Entry']}\n"
+        f"Current {'premium' if basis == 'Option' else 'index level'}: {milestone['Price']}\n"
         f"Move from entry: {milestone['Move']} points ({milestone['Direction']})\n"
     )
     recipients = script_config.get("email_recipients") if script_config else None
@@ -1574,7 +1597,7 @@ def log_startup_status():
     cleanup_old_logs()
     logger.info("=" * 80)
     logger.info(f"[SCHEDULER] Started at {now.strftime('%Y-%m-%d %H:%M:%S IST')}")
-    logger.info(f"[MODE] {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
+    logger.info("[MODE] PAPER ONLY (trade execution is disabled in strategy configuration)")
     logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} configured")
     logger.info(f"[LOG_RETENTION] {CONFIG.get('log_retention_days', 2)} day(s)")
     email_enabled = CONFIG.get("email_notifications", {}).get("enabled", False)
@@ -1717,7 +1740,7 @@ def print_schedule():
             print(f"  Delay:   {delay} seconds (before API call)")
     
     print("\n" + "=" * 80)
-    print(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
+    print("Mode: PAPER ONLY (trade execution is disabled in strategy configuration)")
     email_cfg = CONFIG.get("email_notifications", {})
     print(f"Email: {'ENABLED' if email_cfg.get('enabled') else 'DISABLED'}")
     print("=" * 80 + "\n")

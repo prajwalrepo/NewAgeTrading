@@ -84,7 +84,7 @@ CONFIG = {
     },
     "sensex": {
         "root": "SENSEX",
-        "enable_actual_trade": True,
+        "enable_actual_trade": False,
         "lot_size": 20,
         "exchange": "BSE",
         "segment": "SEGMENT_FNO",
@@ -110,8 +110,8 @@ def log_event(message):
     try:
         with TRADE_LOG_FILE.open("a", encoding="utf-8") as log_handle:
             log_handle.write(text + "\n")
-    except Exception:
-        pass
+    except OSError as exc:
+        print(f"[LOG ERROR] {TRADE_LOG_FILE}: {exc}", flush=True)
 
 
 def _make_paper_leg(order_symbol, price, reason="PAPER", qty=None, strike=None, lot_size=None):
@@ -870,13 +870,22 @@ def monitor_open_positions(state):
     instrument_cfg = state["instrument_cfg"]
     take_profit_percent = float(instrument_cfg.get("take_profit_percent", CONFIG.get("take_profit_percent", 150.0)) or 0)
     stop_loss_percent = float(instrument_cfg.get("stop_loss_percent", CONFIG.get("stop_loss_percent", 30.0)) or 0)
+    observed_at = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
     for leg_key in ("ce", "pe"):
         leg = state.get(leg_key)
         if not leg or leg.get("closed"):
             continue
         order_symbol = leg["order_symbol"]
-        current_price = fetch_latest_price_1m(order_symbol, state["instrument_cfg"]["exchange"], state["instrument_cfg"]["segment"])
+        price_symbol = leg.get("candle_symbol", order_symbol)
+        current_price = fetch_latest_price_1m(
+            price_symbol, instrument_cfg["exchange"], instrument_cfg["segment"]
+        )
         if current_price is None:
+            log_event(
+                f"[POSITION TRACK UNAVAILABLE] Time={observed_at} Leg={leg_key.upper()} "
+                f"Symbol={order_symbol} PriceSource={price_symbol} "
+                "CurrentPrice=NA PnL=NA; exit thresholds not evaluated"
+            )
             continue
 
         entry_price = float(leg["entry_price"])
@@ -891,7 +900,8 @@ def monitor_open_positions(state):
         mode_text = "BROKER" if leg.get("broker_order_placed", True) else "PAPER"
         pnl_percent = est_pnl / (entry_price * leg["qty"]) * 100
         log_event(
-            f"[POSITION TRACK] Leg={leg_key.upper()} Symbol={order_symbol} Mode={mode_text} "
+            f"[POSITION TRACK] Time={observed_at} Leg={leg_key.upper()} Symbol={order_symbol} "
+            f"Mode={mode_text} "
             f"BuyAt={entry_price:.2f} CurrentPrice={current_price:.2f} Qty={leg['qty']} "
             f"PnL={est_pnl:.2f} PnLPercent={pnl_percent:.2f}% "
             f"TakeProfitPrice={take_profit:.2f} (+{take_profit_percent:g}%) "
@@ -999,8 +1009,16 @@ def close_remaining_positions(state, reason):
         if not leg or leg.get("closed"):
             continue
         order_symbol = leg["order_symbol"]
-        current_price = fetch_latest_price_1m(order_symbol, state["instrument_cfg"]["exchange"], state["instrument_cfg"]["segment"])
+        current_price = fetch_latest_price_1m(
+            leg.get("candle_symbol", order_symbol),
+            state["instrument_cfg"]["exchange"],
+            state["instrument_cfg"]["segment"],
+        )
         if current_price is None:
+            log_event(
+                f"[FINAL PRICE UNAVAILABLE] {order_symbol}: using entry price "
+                "as estimated exit reference"
+            )
             current_price = float(leg["entry_price"])
         est_pnl = _estimated_pnl(float(leg["entry_price"]), float(current_price), leg["qty"])
         log_event(f"[FINAL EST PNL] {order_symbol} Entry={float(leg['entry_price']):.2f} ExitRef={float(current_price):.2f} Qty={leg['qty']} EstPnL={est_pnl:.0f} Reason={reason}")
@@ -1222,6 +1240,10 @@ def main_loop():
         f"[CONFIG] Selected {instrument_name} today expiry: candle={expiry_entry['candle_expiry']} "
         f"order={expiry_entry['order_expiry']}"
     )
+    log_event(
+        f"[MODE] {'LIVE' if _actual_trade_enabled(instrument_cfg) else 'PAPER ONLY'} "
+        f"for {instrument_name}"
+    )
 
     state = {
         "instrument": instrument_name,
@@ -1312,6 +1334,13 @@ def main_loop():
             elif state["entered"]:
                 next_check_seconds = max(1, int(CONFIG.get("monitor_interval_seconds", 60)))
                 sleep_now = get_ist_now()
+                seconds_since_midnight = (
+                    sleep_now.hour * 3600 + sleep_now.minute * 60 + sleep_now.second
+                )
+                seconds_until_next_check = (
+                    next_check_seconds - seconds_since_midnight % next_check_seconds
+                    - sleep_now.microsecond / 1_000_000
+                )
                 squareoff_at = datetime.combine(
                     sleep_now.date(), _parse_hhmm(CONFIG["force_exit_time"])
                 )
@@ -1320,7 +1349,7 @@ def main_loop():
                 ).total_seconds()
                 if seconds_until_squareoff <= 0:
                     continue
-                time.sleep(max(1, min(next_check_seconds, seconds_until_squareoff)))
+                time.sleep(max(1, min(seconds_until_next_check, seconds_until_squareoff)))
             else:
                 time.sleep(5)
         except KeyboardInterrupt:

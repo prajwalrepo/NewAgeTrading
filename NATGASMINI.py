@@ -57,7 +57,7 @@ CONFIG = {
     "strike_start": 200,
     "strike_end": 420,
 
-    "candle_interval": "5M",
+    "candle_interval": "3M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -1117,7 +1117,7 @@ def place_buy_order(
 ):
     try:
         side = candle_to_side.get(candle_symbol, "CE")
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", False))
         if actual_trade_enabled:
             allowed, cnt, max_allowed = check_trade_limit(side)
             if not allowed:
@@ -1281,7 +1281,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             return None
 
         exit_attempt_tracker[candle_symbol] = now_ts
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", False))
         if actual_trade_enabled:
             resp = place_order_with_retry(order_symbol, qty_units, growwapi.TRANSACTION_TYPE_SELL, growwapi.PRODUCT_MIS)
             order_id = resp.get("groww_order_id")

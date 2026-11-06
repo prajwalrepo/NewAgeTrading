@@ -72,7 +72,7 @@ CONFIG = {
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "entry_window_start": "09:13",
+    "entry_window_start": "09:30",
     "entry_window_end": "15:15",
     "force_exit_time": "15:15",
 
@@ -279,7 +279,7 @@ def _parse_hhmm(value):
 def get_session_state(now_dt=None):
     now_dt = now_dt or get_trading_now()
     current_time = dt_time(now_dt.hour, now_dt.minute, now_dt.second)
-    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "09:13"))
+    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "09:30"))
     entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "15:10"))
     force_exit = _parse_hhmm(CONFIG.get("force_exit_time", "15:30"))
 
@@ -718,7 +718,7 @@ def infer_side_from_symbol(symbol):
 
 
 def get_live_open_positions():
-    if not CONFIG.get("enable_actual_trade", True):
+    if not CONFIG.get("enable_actual_trade", False):
         return {
             symbol: {
                 "qty": int(pos.get("qty", 0)),
@@ -1082,7 +1082,7 @@ def live_entry_allowed_by_daily_limits():
     max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
     max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
     return bool(
-        CONFIG.get("enable_actual_trade", True)
+        CONFIG.get("enable_actual_trade", False)
         and not daily_live_trading_halted
         and not (max_profit_limit > 0 and daily_realized_pnl >= max_profit_limit)
         and not (max_loss_limit > 0 and daily_realized_pnl <= -max_loss_limit)
@@ -1498,7 +1498,7 @@ def place_buy_order(
                 print(f"[BLOCKED] Trade limit {candle_symbol}: {cnt}/{max_allowed}")
                 return None
 
-        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", True))
+        actual_trade_enabled = bool(CONFIG.get("enable_actual_trade", False))
         max_profit_limit = float(CONFIG.get("max_profit_per_day", 0) or 0)
         max_loss_limit = float(CONFIG.get("max_loss_per_day", 0) or 0)
         daily_limit_reason = None
@@ -1704,7 +1704,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
         exit_reason_tracker[candle_symbol] = reason
 
         actual_trade_enabled = bool(
-            CONFIG.get("enable_actual_trade", True) and not pos.get("paper_only", False)
+            CONFIG.get("enable_actual_trade", False) and not pos.get("paper_only", False)
         )
         if actual_trade_enabled:
             product_constant = resolve_product_constant(live_product_type)

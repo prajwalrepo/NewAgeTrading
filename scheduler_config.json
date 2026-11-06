@@ -33,26 +33,82 @@
   "scripts": {
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
-      "description": "NIFTY Intraday FNO Strategy with 3:15 PM IST square-off",
-      "enabled": true,
-      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:13",
+      "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 3:15 PM IST square-off",
+      "enabled": false,
+      "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
+      "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 0,
-      "send_signal_emails": false,
-      "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
+      "send_signal_emails": true,
+      "notes": "Runs Monday, Tuesday, and Friday from 09:30 IST. No new entries after the strategy cutoff; open positions are squared off at 15:15 IST. Scheduler allows until 15:16 for square-off completion. Immediate emails are enabled for each buy and sell signal."
     },
 
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
-      "description": "SENSEX Intraday FNO Strategy with 3:15 PM IST square-off",
-      "enabled": true,
-      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:13",
+      "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 3:15 PM IST square-off",
+      "enabled": false,
+      "run_days": ["WEDNESDAY", "THURSDAY"],
+      "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 10,
-      "send_signal_emails": false,
-      "notes": "No new entries at or after 15:15 IST. Open positions are squared off then, and the script exits after positions are closed."
+      "send_signal_emails": true,
+      "notes": "Runs Wednesday and Thursday from 09:30 IST. No new entries at or after 15:15 IST. Open positions are squared off then; scheduler allows until 15:16 for completion. Immediate emails are enabled for each buy and sell signal."
+    },
+
+    "NIFTYSupperBuy": {
+      "script_name": "NIFTYSupperBuy.py",
+      "description": "NIFTY 2-minute Supertrend long-option strategy",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "09:30",
+      "run_time_end": "15:32",
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "entry_window_start": "09:30",
+      "entry_window_end": "15:10",
+      "run_end_time": "15:30",
+      "lot_size": 65,
+      "milestone_points_by_side": {
+        "CE": 30,
+        "PE": 30
+      },
+      "enable_actual_trade": false,
+      "atr_period": 10,
+      "factor": 3.0,
+      "strike_step": 50,
+      "expiry_fs": ["19Oct26", "27Oct26", "03Nov26", "09Nov26", "17Nov26", "23Nov26"],
+      "order_expiry": ["26O19", "26OCT", "26N03", "26N09", "26N17", "26NOV"],
+      "api_rate_limit_retry_delay": 5,
+      "api_rate_limit_max_retries": 3,
+      "notes": "Runs Monday through Friday in paper-only mode. BUY confirmation uses two closed 2-minute option candles; buy/sell signals and option-price milestones are emailed, and the daily summary includes completed-trade P&L."
+    },
+
+    "SENSEXSupperBuy": {
+      "script_name": "SENSEXSupperBuy.py",
+      "description": "SENSEX 2-minute Supertrend long-option strategy",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "09:30",
+      "run_time_end": "15:32",
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "entry_window_start": "09:30",
+      "entry_window_end": "15:10",
+      "run_end_time": "15:30",
+      "lot_size": 20,
+      "milestone_points_by_side": {
+        "CE": 50,
+        "PE": 50
+      },
+      "enable_actual_trade": false,
+      "atr_period": 10,
+      "factor": 3.0,
+      "strike_step": 100,
+      "expiry_fs": ["22Oct26", "29Oct26", "05Nov26", "12Nov26", "19Nov26", "26Nov26"],
+      "order_expiry": ["26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
+      "api_rate_limit_retry_delay": 5,
+      "api_rate_limit_max_retries": 3,
+      "notes": "Runs Monday through Friday in paper-only mode. BUY confirmation uses two closed 2-minute option candles; buy/sell signals and option-price milestones are emailed, and the daily summary includes completed-trade P&L."
     },
 
     "320trade": {
@@ -64,7 +120,7 @@
       "run_time_end": "15:30",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "320trade.py prioritizes SENSEX (live, up to 2 lots per CE/PE leg); NIFTY remains paper-only. Selects 100-point ITM strikes at 15:15 and starts CE/PE tracking at 15:20. Summary email includes closed live and paper legs, exit reason, quantity, and P&L."
+      "notes": "320trade.py uses the same minute-by-minute CE/PE price, P&L, and exit monitoring for both SENSEX and NIFTY in paper-only mode. Selects 100-point ITM strikes at 15:15. Summary email includes paper legs, exit reason, quantity, and estimated P&L."
     },
 
     "OILMINI": {

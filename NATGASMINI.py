@@ -73,10 +73,12 @@ CONFIG = {
 
     # Trading schedule in IST
     "trading_timezone_offset_minutes": 330,
-    "entry_window_start": "09:00",
-    "entry_window_end": "23:00",
-    "force_exit_time": "23:00",
-    "expiry_day_force_exit_time": "23:00",
+    "entry_window_start": "15:30",
+    "entry_window_end": "23:30",
+    "force_exit_time": "23:30",
+    "expiry_day_force_exit_time": "23:30",
+    "api_rate_limit_retry_delay": 10,
+    "api_rate_limit_max_retries": 3,
 
     # Risk
     # Keep entries paper-only until explicitly enabled.
@@ -264,13 +266,13 @@ def get_selected_option_expiry_date():
 def get_session_state(now_dt=None):
     now_dt = now_dt or get_trading_now()
     current_time = dt_time(now_dt.hour, now_dt.minute, now_dt.second)
-    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "17:30"))
-    entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "22:30"))
-    force_exit = _parse_hhmm(CONFIG.get("force_exit_time", "22:30"))
+    entry_start = _parse_hhmm(CONFIG.get("entry_window_start", "15:30"))
+    entry_end = _parse_hhmm(CONFIG.get("entry_window_end", "23:30"))
+    force_exit = _parse_hhmm(CONFIG.get("force_exit_time", "23:30"))
 
     expiry_date = get_selected_option_expiry_date()
     if expiry_date is not None and now_dt.date() == expiry_date:
-        force_exit = _parse_hhmm(CONFIG.get("expiry_day_force_exit_time", "22:00"))
+        force_exit = _parse_hhmm(CONFIG.get("expiry_day_force_exit_time", "23:30"))
         if entry_end > force_exit:
             entry_end = force_exit
 
@@ -592,30 +594,41 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
     if cached_df is not None:
         return cached_df, cached_err
 
+    retries = max(0, int(CONFIG.get("api_rate_limit_max_retries", 3)))
+    retry_delay = max(1, int(CONFIG.get("api_rate_limit_retry_delay", 10)))
     for lookback in [int(lookback_minutes), max(int(lookback_minutes), 24 * 60), max(int(lookback_minutes), 3 * 24 * 60)]:
         start_time = end_time - timedelta(minutes=lookback)
-        try:
-            raw = growwapi.get_historical_candles(
-                groww_symbol=groww_symbol,
-                exchange=exchange_const,
-                segment=segment_const,
-                candle_interval=interval_key,
-                start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                end_time=end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                timeout=int(CONFIG.get("api_timeout_seconds", 10)),
-            )
-            candles = _extract_candle_rows(raw)
-            if candles:
-                df = _build_dataframe(candles)
-                if df is not None and not df.empty:
-                    df = df[df["date"] <= pd.Timestamp(datetime.now())].reset_index(drop=True)
-                    if len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
-                        _set_cached_candles(cache_key, df)
-                        return df, None
-        except Exception as exc:
-            if "rate limit" in str(exc).lower():
+        for attempt in range(retries + 1):
+            try:
+                raw = growwapi.get_historical_candles(
+                    groww_symbol=groww_symbol,
+                    exchange=exchange_const,
+                    segment=segment_const,
+                    candle_interval=interval_key,
+                    start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                    end_time=end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                    timeout=int(CONFIG.get("api_timeout_seconds", 10)),
+                )
+                break
+            except Exception as exc:
+                if "rate limit" in str(exc).lower() and attempt < retries:
+                    delay = retry_delay * (attempt + 1)
+                    print(
+                        f"[RATE LIMIT] {groww_symbol}; retrying in {delay}s "
+                        f"({attempt + 1}/{retries})",
+                        flush=True,
+                    )
+                    time.sleep(delay)
+                    continue
                 return None, f"{type(exc).__name__}: {exc}"
-            return None, f"{type(exc).__name__}: {exc}"
+        candles = _extract_candle_rows(raw)
+        if candles:
+            df = _build_dataframe(candles)
+            if df is not None and not df.empty:
+                df = df[df["date"] <= pd.Timestamp(datetime.now())].reset_index(drop=True)
+                if len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
+                    _set_cached_candles(cache_key, df)
+                    return df, None
     return None, "Insufficient commodity candle data"
 
 
@@ -627,26 +640,40 @@ def fetch_latest_price_1m(symbol):
         return cached_price
     exchange = CONFIG.get("exchange", "MCX")
     groww_symbol = symbol if symbol.startswith(f"{exchange}-") else f"{exchange}-{symbol}"
-    try:
-        start_time = datetime.now() - timedelta(minutes=10)
-        raw = growwapi.get_historical_candles(
-            groww_symbol=groww_symbol,
-            exchange=getattr(growwapi, f"EXCHANGE_{exchange}"),
-            segment=_resolve_segment_constant(CONFIG.get("segment", "SEGMENT_COMMODITY")),
-            candle_interval="1minute",
-            start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
-            end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            timeout=int(CONFIG.get("api_timeout_seconds", 10)),
-        )
-        candles = _extract_candle_rows(raw)
-        if candles:
-            df = _build_dataframe(candles)
-            if not df.empty:
-                price = float(df["close"].iloc[-1])
-                _set_cached_price(symbol, price)
-                return price
-    except Exception as exc:
-        print(f"[CANDLE ERROR] {symbol}: {type(exc).__name__}: {exc}")
+    retries = max(0, int(CONFIG.get("api_rate_limit_max_retries", 3)))
+    retry_delay = max(1, int(CONFIG.get("api_rate_limit_retry_delay", 10)))
+    start_time = datetime.now() - timedelta(minutes=10)
+    for attempt in range(retries + 1):
+        try:
+            raw = growwapi.get_historical_candles(
+                groww_symbol=groww_symbol,
+                exchange=getattr(growwapi, f"EXCHANGE_{exchange}"),
+                segment=_resolve_segment_constant(CONFIG.get("segment", "SEGMENT_COMMODITY")),
+                candle_interval="1minute",
+                start_time=start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                timeout=int(CONFIG.get("api_timeout_seconds", 10)),
+            )
+            candles = _extract_candle_rows(raw)
+            if candles:
+                df = _build_dataframe(candles)
+                if not df.empty:
+                    price = float(df["close"].iloc[-1])
+                    _set_cached_price(symbol, price)
+                    return price
+            break
+        except Exception as exc:
+            if "rate limit" in str(exc).lower() and attempt < retries:
+                delay = retry_delay * (attempt + 1)
+                print(
+                    f"[RATE LIMIT] {groww_symbol}; retrying in {delay}s "
+                    f"({attempt + 1}/{retries})",
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
+            print(f"[CANDLE ERROR] {symbol}: {type(exc).__name__}: {exc}")
+            break
     return None
 
 

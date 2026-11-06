@@ -86,7 +86,7 @@
     "SENSEXSupperBuy": {
       "script_name": "SENSEXSupperBuy.py",
       "description": "SENSEX 2-minute Supertrend long-option strategy",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_time_start": "09:30",
       "run_time_end": "15:32",
@@ -108,7 +108,7 @@
       "order_expiry": ["26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
       "api_rate_limit_retry_delay": 5,
       "api_rate_limit_max_retries": 3,
-      "notes": "Runs Monday through Friday in paper-only mode. BUY confirmation uses two closed 2-minute option candles; buy/sell signals and option-price milestones are emailed, and the daily summary includes completed-trade P&L."
+      "notes": "Disabled; run only NIFTYSupperBuy for now."
     },
 
     "320trade": {
@@ -129,12 +129,12 @@
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [10, 11, 12, 13, 14,15, 16, 17],
-      "run_time_start": "09:00",
-      "run_time_end": "23:05",
-      "api_delay_seconds": 10,
+      "run_time_start": "15:30",
+      "run_time_end": "23:35",
+      "api_delay_seconds": 0,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Order placement is controlled by enable_actual_trade in OILMINI.py. Immediate mail for every generated signal."
+      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts first to reduce Groww API contention. Paper-only by default."
     },
 
     "GOLDMINI": {
@@ -143,12 +143,12 @@
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [23, 24, 25, 26, 27],
-      "run_time_start": "16:00",
-      "run_time_end": "23:00",
-      "api_delay_seconds": 10,
+      "run_time_start": "15:30",
+      "run_time_end": "23:35",
+      "api_delay_seconds": 45,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Enabled to run on weekdays falling on the 23rd-27th of every month. Option expiries are 27NOV26 and 29DEC26; update contract expiries as they change. Paper-only by default."
+      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts after OILMINI to reduce Groww API contention. Paper-only by default."
     },
 
     "NATGASMINI": {
@@ -157,12 +157,12 @@
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
       "run_days_of_month": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19, 20, 21, 22, 28, 29, 30, 31],
-      "run_time_start": "09:00",
-      "run_time_end": "23:05",
-      "api_delay_seconds": 10,
+      "run_time_start": "15:30",
+      "run_time_end": "23:35",
+      "api_delay_seconds": 90,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Paper-only by default. Uses 5-minute candles, trades 09:00-23:00 IST with Supertrend-only signals, squares off at 23:00, and sends its daily report after square-off."
+      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only by default."
     },
 
     "SupperWeekScan": {

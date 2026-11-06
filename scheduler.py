@@ -110,9 +110,9 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": [],
-        "run_time_start": "09:00",
-        "run_time_end": "23:05",  # Allow the strategy to complete its 23:00 square-off
-        "api_delay_seconds": 00,  # Start 60 sec after NIFTY
+        "run_time_start": "15:30",
+        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
+        "api_delay_seconds": 0,
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
@@ -123,9 +123,9 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": [23, 24, 25, 26, 27],
-        "run_time_start": "16:00",
-        "run_time_end": "23:00",
-        "api_delay_seconds": 10,
+        "run_time_start": "15:30",
+        "run_time_end": "23:35",
+        "api_delay_seconds": 45,
         "send_signal_emails": True,
     },
     
@@ -136,9 +136,9 @@ SCRIPTS_SCHEDULE = {
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
         "run_days_of_month": [],
-        "run_time_start": "09:00",
-        "run_time_end": "23:05",  # Allow the strategy to complete its 23:00 square-off
-        "api_delay_seconds": 00,  # Start 90 sec after NIFTY
+        "run_time_start": "15:30",
+        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
+        "api_delay_seconds": 90,
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 

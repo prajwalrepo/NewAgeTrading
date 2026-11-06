@@ -1358,22 +1358,28 @@ def email_trade_signal(config_key, trade, recipients=None):
     side = trade.get("Side") or "UNKNOWN"
     symbol = trade.get("Symbol") or "UNKNOWN"
     trade_time = trade.get("Time") or "UNKNOWN"
-    subject = f"[TRADE] {config_key} {side} {symbol} at {trade_time}"
+    is_paper = trade.get("Order Placed", "").upper() != "YES"
+    mode = "Paper trade" if is_paper else "Live order executed"
+    subject_prefix = "[PAPER TRADE]" if is_paper else "[LIVE TRADE]"
+    subject = f"{subject_prefix} {config_key} {side} {symbol} at {trade_time}"
     details = (
         ("Script", config_key),
-        ("Action", side),
+        ("Action", "BUY signal" if side.upper() == "BUY" else "SELL / position closed"),
+        ("Trade mode", mode),
         ("Time", trade_time),
         ("Symbol", symbol),
         ("Strike", trade.get("Strike") or "N/A"),
-        ("Price", trade.get("Price") or "N/A"),
-        ("Buy price", trade.get("Buy Price") or "N/A"),
-        ("Sell price", trade.get("Sell Price") or "N/A"),
-        ("PnL", trade.get("PnL") or "N/A"),
+        ("Option premium", trade.get("Price") or "N/A"),
         ("Quantity", trade.get("Qty") or "N/A"),
         ("Reason", trade.get("Reason") or "N/A"),
-        ("Order placed", trade.get("Order Placed") or "UNKNOWN"),
     )
-    body = "Trade order event\n\n" + "\n".join(
+    if side.upper() == "SELL":
+        details += (
+            ("Buy price", trade.get("Buy Price") or "N/A"),
+            ("Sell price", trade.get("Sell Price") or "N/A"),
+            ("Realized P&L", trade.get("PnL") or "N/A"),
+        )
+    body = f"{config_key} {mode.lower()} {side.lower()} event\n\n" + "\n".join(
         f"{label}: {value}" for label, value in details
     )
     rows = "".join(
@@ -1383,7 +1389,10 @@ def email_trade_signal(config_key, trade, recipients=None):
         "</tr>"
         for label, value in details
     )
-    html_body = f"<html><body><h2>Trade order event</h2><table>{rows}</table></body></html>"
+    html_body = (
+        f"<html><body><h2>{html.escape(config_key)} {html.escape(mode)} "
+        f"{html.escape(side)} event</h2><table>{rows}</table></body></html>"
+    )
     send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 

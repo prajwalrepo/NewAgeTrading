@@ -588,6 +588,24 @@ def _entry_candidate(frame, config):
     }
 
 
+def _log_option_snapshot(config, contract, frame):
+    line, direction = supertrend(frame, config["atr_period"], config["factor"])
+    candidate = _entry_candidate(frame, config)
+    st_value = float(line[-1]) if len(line) and np.isfinite(line[-1]) else None
+    st_text = f"{st_value:.2f}" if st_value is not None else "NA"
+    _log(
+        config,
+        f"[OPTION] {contract['candle_symbol']} "
+        f"Candle={frame['date'].iloc[-1]} "
+        f"Price={float(frame['close'].iloc[-1]):.2f} "
+        f"Open={float(frame['open'].iloc[-1]):.2f} "
+        f"Low={float(frame['low'].iloc[-1]):.2f} "
+        f"ST={st_text} "
+        f"Signal={'BUY' if candidate is not None else 'NO_SIGNAL'} "
+        f"Direction={'up' if direction[-1] == 1 else 'down'}",
+    )
+
+
 def _monitor_position(api, config, position, option_frame, dry_run):
     _, direction = supertrend(option_frame, config["atr_period"], config["factor"])
     if len(direction) < 1:
@@ -974,11 +992,29 @@ def run_strategy(config, dry_run=False):
             }
             option_frames = {}
             for side, contract in contracts.items():
-                raw_option_frame = _fetch_candles(api, config, contract["candle_symbol"], "SEGMENT_FNO")
-                if len(raw_option_frame) < int(config["atr_period"]) + 5:
-                    _log(config, f"[WARN] Insufficient {side} candles for {contract['candle_symbol']}")
+                try:
+                    raw_option_frame = _fetch_candles(
+                        api, config, contract["candle_symbol"], "SEGMENT_FNO"
+                    )
+                except Exception as exc:
+                    _log(
+                        config,
+                        f"[OPTION ERROR] Side={side} Symbol={contract['candle_symbol']} "
+                        f"Type={type(exc).__name__} Message={exc}",
+                    )
                     continue
-                option_frames[side] = raw_option_frame.iloc[:-1].reset_index(drop=True)
+                if len(raw_option_frame) < int(config["atr_period"]) + 5:
+                    _log(
+                        config,
+                        f"[OPTION] {contract['candle_symbol']} Price=NA Open=NA Low=NA "
+                        f"ST=NA Signal=NO_SIGNAL Direction=NA "
+                        f"CandleCount={len(raw_option_frame)} "
+                        f"Reason=insufficient_candles Required={int(config['atr_period']) + 5}",
+                    )
+                    continue
+                frame = raw_option_frame.iloc[:-1].reset_index(drop=True)
+                option_frames[side] = frame
+                _log_option_snapshot(config, contract, frame)
 
             if active_position and active_position.get("monitorable"):
                 side = active_position["side"]

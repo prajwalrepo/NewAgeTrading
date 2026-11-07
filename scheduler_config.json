@@ -27,7 +27,7 @@
     "send_daily_summary_on_stop": true,
     "send_weekly_summary_on_monday": true,
     "weekly_summary_recipients": ["gencinvestor@gmail.com"],
-    "notes": "Signal emails contain trade details without workbook attachments. Daily summaries include a trade table and workbook. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell report attached as an Excel workbook; the email body contains no trade table."
+    "notes": "Signal and daily summary emails contain trade details in the email body without workbook attachments. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell details in the email body and no workbook attachment."
   },
 
   "scripts": {
@@ -175,6 +175,19 @@
       "api_delay_seconds": 0,
       "send_signal_emails": true,
       "notes": "Weekly scanner uses Groww weekly candles and sends immediate signal emails on Friday 11:00 PM IST."
+    },
+    "SupperDayScan": {
+      "script_name": "SupperDayScan.py",
+      "description": "Daily-candle scanner for Supertrend BUY signals",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
+      "run_time_start": "23:30",
+      "run_time_end": "23:59",
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "send_daily_summary_on_stop": false,
+      "email_recipients": ["gencinvestor@gmail.com"],
+      "notes": "Runs daily after 11:30 PM IST using daily candles and emails the combined list of stocks with a BUY signal."
     }
   },
 

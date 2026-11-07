@@ -34,8 +34,8 @@ CONFIG = {
     "run_end_time": "15:30",
     # Maximum option-premium budget for each trade, subject to available margin.
     "allocation_per_trade": 35000,
-    "milestone_points": 30,
-    "milestone_points_by_side": {"CE": 30, "PE": 30},
+    "milestone_points": 10,
+    "milestone_points_by_side": {"CE": 10, "PE": 10},
     "enable_actual_trade": False,
     "api_rate_limit_retry_delay": 5,
     "api_rate_limit_max_retries": 3,
@@ -596,7 +596,6 @@ def _log_option_snapshot(config, contract, frame):
     _log(
         config,
         f"[OPTION] {contract['candle_symbol']} "
-        f"Candle={frame['date'].iloc[-1]} "
         f"Price={float(frame['close'].iloc[-1]):.2f} "
         f"Open={float(frame['open'].iloc[-1]):.2f} "
         f"Low={float(frame['low'].iloc[-1]):.2f} "

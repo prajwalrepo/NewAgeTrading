@@ -152,6 +152,19 @@ SCRIPTS_SCHEDULE = {
         "api_delay_seconds": 0,
         "send_signal_emails": True,
     },
+
+    "SupperDayScan": {
+        "script_name": "SupperDayScan.py",
+        "description": "Daily-candle stock scanner for Supertrend BUY signals",
+        "enabled": True,
+        "run_days": list(DayOfWeek),
+        "run_time_start": "23:30",
+        "run_time_end": "23:59",
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "send_daily_summary_on_stop": False,
+        "email_recipients": ["gencinvestor@gmail.com"],
+    },
 }
 
 
@@ -463,6 +476,13 @@ def classify_process_exit(run_context, exit_code):
     recent_output = [line.strip() for line in run_context.get("recent_output", []) if str(line).strip()]
     normalized_output = "\n".join(recent_output[-10:]).lower()
     if (
+        str(run_context.get("config_key") or "").upper() == "SUPPERDAYSCAN"
+        and exit_code == 0
+        and "[scan complete] supperdayscan" in normalized_output
+    ):
+        return "strategy_complete", "Daily stock scan completed normally", False
+
+    if (
         str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}
         and exit_code == 0
         and "[strategy complete] all open positions closed at 15:15 ist" in normalized_output
@@ -660,9 +680,14 @@ TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
     "Lot Size", "Qty", "Order Placed",
 )
+SUMMARY_EMAIL_COLUMNS = tuple(
+    column for column in TRADE_REPORT_COLUMNS if column != "Symbol"
+)
 MONTHLY_REPORT_SHEETS = {
     "NIFTYINTRA": "NIFTY",
     "SENSEXINTRA": "SENSEX",
+    "NIFTYSUPPERBUY": "NIFTYSUPERBUY",
+    "SENSEXSUPPERBUY": "SENSEXSUPERBUY",
     "NATGASMINI": "GAS",
     "OILMINI": "OIL",
     "GOLDMINI": "GOLD",
@@ -937,14 +962,14 @@ def _trade_report_rows(report_path, sheet_name="Trades"):
 
 
 def _trade_rows_html(rows):
-    header_cells = "".join(f"<th>{html.escape(column)}</th>" for column in TRADE_REPORT_COLUMNS)
+    header_cells = "".join(f"<th>{html.escape(column)}</th>" for column in SUMMARY_EMAIL_COLUMNS)
     if not rows:
         return "<p>No trade signals were recorded.</p>"
     table_rows = "".join(
         "<tr>"
         + "".join(
             f"<td>{html.escape(str(row.get(column) if row.get(column) is not None else ''))}</td>"
-            for column in TRADE_REPORT_COLUMNS
+            for column in SUMMARY_EMAIL_COLUMNS
         )
         + "</tr>"
         for row in rows
@@ -963,11 +988,11 @@ def _trade_rows_text(rows):
         return "No trade signals were recorded."
     return "\n".join(
         [
-            " | ".join(TRADE_REPORT_COLUMNS),
+            " | ".join(SUMMARY_EMAIL_COLUMNS),
             *(
                 " | ".join(
                     str(row.get(column) if row.get(column) is not None else "")
-                    for column in TRADE_REPORT_COLUMNS
+                    for column in SUMMARY_EMAIL_COLUMNS
                 )
                 for row in rows
             ),
@@ -1077,6 +1102,7 @@ def _320trade_summary_email_content(
     run_context, reason, report_path, counts, title="320trade completed"
 ):
     outcomes = _320trade_outcome_rows(report_path)
+    trade_rows = _trade_report_rows(report_path)
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     total, buys, sells, orders_placed = counts
     text = [
@@ -1084,16 +1110,33 @@ def _320trade_summary_email_content(
         f"Trading date: {trading_date}",
         f"Stop reason: {reason}",
         f"Trade signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})",
+        "",
+        "Trade details:",
+        _trade_rows_text(trade_rows),
     ]
+    html_trade_table = (
+        "<h3>Trade details</h3>"
+        + _trade_rows_html(trade_rows)
+    )
     if not outcomes:
         text.append("No completed live or paper CE/PE trade outcomes were recorded.")
-        return "\n".join(text), None
+        html_body = (
+            f"<html><body><h2>{html.escape(title)}</h2>"
+            f"<p>Trading date: {html.escape(trading_date)}<br>"
+            f"Stop reason: {html.escape(str(reason))}<br>"
+            f"Trade signals: {total} (buys: {buys}, sells: {sells}, "
+            f"orders placed: {orders_placed})</p>"
+            + html_trade_table
+            + "<p>No completed live or paper CE/PE trade outcomes were recorded.</p>"
+            + "</body></html>"
+        )
+        return "\n".join(text), html_body
 
     winning_trades = sum(row["pnl"] > 0 for row in outcomes)
     losing_trades = sum(row["pnl"] < 0 for row in outcomes)
     total_pnl = sum(row["pnl"] for row in outcomes)
     columns = (
-        "Mode", "Symbol", "Strike", "Buy Price", "Sell Price", "Sell Time",
+        "Mode", "Strike", "Buy Price", "Sell Price", "Sell Time",
         "Quantity", "PnL", "Exit Reason", "Order Placed",
     )
     text.append("")
@@ -1101,7 +1144,7 @@ def _320trade_summary_email_content(
     text.append(" | ".join("-" * len(column) for column in columns))
     for row in outcomes:
         text.append(
-            f"{row['mode']} | {row['symbol']} | {row['strike']} | "
+        f"{row['mode']} | {row['strike']} | "
             f"{row['buy_price']:.2f} | {row['sell_price']:.2f} | {row['sell_time']} | "
             f"{row['quantity']:g} | {row['pnl']:.2f} | {row['exit_reason']} | "
             f"{'YES' if row['order_placed'] else 'NO'}"
@@ -1117,7 +1160,6 @@ def _320trade_summary_email_content(
     table_rows = "".join(
         "<tr>"
         f"<td>{html.escape(str(row['mode']))}</td>"
-        f"<td>{html.escape(str(row['symbol']))}</td>"
         f"<td>{html.escape(str(row['strike']))}</td>"
         f"<td>{row['buy_price']:.2f}</td>"
         f"<td>{row['sell_price']:.2f}</td>"
@@ -1133,7 +1175,8 @@ def _320trade_summary_email_content(
         f"<html><body><h2>{html.escape(title)}</h2>"
         f"<p>Trading date: {html.escape(trading_date)}<br>"
         f"Stop reason: {html.escape(str(reason))}</p>"
-        f"<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
+        + html_trade_table
+        + f"<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
         + "".join(f"<th>{html.escape(column)}</th>" for column in columns)
         + "</tr></thead><tbody>"
         + table_rows
@@ -1150,7 +1193,12 @@ def _320trade_summary_email_content(
 def email_daily_trade_summary(run_context, reason):
     """Send one daily summary when a trading script stops."""
     email_cfg = CONFIG.get("email_notifications", {})
-    if not email_cfg.get("enabled", False) or not email_cfg.get("send_daily_summary_on_stop", True):
+    script_config = SCRIPTS_SCHEDULE.get(run_context.get("config_key"), {})
+    if (
+        not email_cfg.get("enabled", False)
+        or not email_cfg.get("send_daily_summary_on_stop", True)
+        or not script_config.get("send_daily_summary_on_stop", True)
+    ):
         return
     if run_context.get("daily_summary_email_sent"):
         return
@@ -1166,7 +1214,6 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
-    script_config = SCRIPTS_SCHEDULE.get(run_context.get("config_key"), {})
     recipients = script_config.get("email_recipients")
     config_key_upper = str(run_context.get("config_key") or "").upper()
     if config_key_upper in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
@@ -1180,7 +1227,6 @@ def email_daily_trade_summary(run_context, reason):
         send_email_notification(
             subject,
             body,
-            attachment_path=report_path,
             html_body=html_body,
             recipients=recipients,
         )
@@ -1194,8 +1240,7 @@ def email_daily_trade_summary(run_context, reason):
         f"Trade signals: {total}\n"
         f"Buy signals: {buys}\n"
         f"Sell signals: {sells}\n"
-        f"Orders placed: {orders_placed}\n"
-        f"Excel report: {report_path.name}"
+        f"Orders placed: {orders_placed}"
     )
     html_sections = [
         f"<html><body><h2>{html.escape(subject)}</h2>"
@@ -1227,11 +1272,9 @@ def email_daily_trade_summary(run_context, reason):
             logger.error(f"[REPORT] Failed to calculate completed outcomes for {run_context['config_key']}: {exc}")
 
     html_sections.append("</body></html>")
-    attachment_path = None if str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"} else report_path
     send_email_notification(
         subject,
         body + "\n\nTrade details:\n" + _trade_rows_text(_trade_report_rows(report_path)),
-        attachment_path=attachment_path,
         html_body="".join(html_sections),
         recipients=recipients,
     )
@@ -1327,6 +1370,7 @@ def email_weekly_trade_summary(now=None, running_processes=None):
         return
 
     all_rows = [row for rows in market_rows.values() for row in rows]
+    all_rows.sort(key=lambda row: str(row.get("Time") or ""))
     buys = sum(str(row.get("Side") or "").upper() == "BUY" for row in all_rows)
     sells = sum(str(row.get("Side") or "").upper() == "SELL" for row in all_rows)
     orders_placed = sum(
@@ -1337,14 +1381,22 @@ def email_weekly_trade_summary(now=None, running_processes=None):
         f"Weekly trade summary for {week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}\n"
         f"Total signals: {len(all_rows)} | Buy signals: {buys} | "
         f"Sell signals: {sells} | Orders placed: {orders_placed}\n"
-        "The attached Excel workbook contains the complete week's buy and sell signals, "
-        "including whether each order was placed."
+        "\nTrade details:\n"
+        f"{_trade_rows_text(all_rows)}"
+    )
+    html_body = (
+        f"<html><body><h2>{html.escape(subject)}</h2>"
+        f"<p>Total signals: {len(all_rows)} | Buy signals: {buys} | "
+        f"Sell signals: {sells} | Orders placed: {orders_placed}</p>"
+        "<h3>Trade details</h3>"
+        + _trade_rows_html(all_rows)
+        + "</body></html>"
     )
 
     if send_email_notification(
         subject,
         body,
-        attachment_path=report_path,
+        html_body=html_body,
         recipients=email_cfg.get("weekly_summary_recipients"),
     ):
         try:
@@ -1515,6 +1567,50 @@ def process_trade_result(config_key, output_line, script_config=None):
     send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 
+def process_buy_scan_results(config_key, output_line, script_config=None):
+    """Email one combined daily BUY list emitted by a stock scanner."""
+    prefix = "[BUY SCAN RESULTS] "
+    if not output_line.startswith(prefix):
+        return
+
+    fields = {}
+    for field in output_line[len(prefix):].split():
+        name, separator, value = field.partition("=")
+        if separator:
+            fields[name] = value
+    if fields.get("Script", "").upper() != str(config_key).upper():
+        logger.error(f"[EMAIL] Ignoring malformed BUY scan results for {config_key}")
+        return
+
+    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
+    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
+    if not send_on_signals or not script_emails_enabled:
+        return
+
+    stocks = [
+        stock for stock in fields.get("Stocks", "").split(",")
+        if stock and stock != "NONE"
+    ]
+    trading_date = fields.get("Date", "UNKNOWN")
+    subject = f"[BUY SIGNALS] {config_key} {trading_date}"
+    if stocks:
+        stock_list = "\n".join(f"- {stock}" for stock in stocks)
+        html_stocks = "".join(f"<li>{html.escape(stock)}</li>" for stock in stocks)
+    else:
+        stock_list = "No stocks generated a BUY signal."
+        html_stocks = "<li>No stocks generated a BUY signal.</li>"
+    body = (
+        f"Daily-candle Supertrend BUY signals for {trading_date}\n\n"
+        f"Stocks ({len(stocks)}):\n{stock_list}"
+    )
+    html_body = (
+        f"<html><body><h2>{html.escape(subject)}</h2>"
+        f"<p>Stocks ({len(stocks)}):</p><ul>{html_stocks}</ul></body></html>"
+    )
+    recipients = script_config.get("email_recipients") if script_config else None
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
+
+
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
     """Read and log script output in real-time"""
     try:
@@ -1532,6 +1628,7 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     process_trade_signal(config_key, output, script_config)
                     process_trade_result(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
+                    process_buy_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
 

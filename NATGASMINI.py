@@ -596,7 +596,13 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
 
     retries = max(0, int(CONFIG.get("api_rate_limit_max_retries", 3)))
     retry_delay = max(1, int(CONFIG.get("api_rate_limit_retry_delay", 10)))
-    for lookback in [int(lookback_minutes), max(int(lookback_minutes), 24 * 60), max(int(lookback_minutes), 3 * 24 * 60)]:
+    lookbacks = (
+        int(lookback_minutes),
+        max(int(lookback_minutes), 24 * 60),
+        max(int(lookback_minutes), 3 * 24 * 60),
+        max(int(lookback_minutes), 7 * 24 * 60),
+    )
+    for lookback in lookbacks:
         start_time = end_time - timedelta(minutes=lookback)
         for attempt in range(retries + 1):
             try:
@@ -629,7 +635,40 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
                 if len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
                     _set_cached_candles(cache_key, df)
                     return df, None
-    return None, "Insufficient commodity candle data"
+    return None, "Insufficient commodity candle data after checking up to 7 days"
+
+
+def _latest_closed_candle_index(df, now=None):
+    """Return the newest candle whose configured interval has fully elapsed."""
+    interval = str(CONFIG.get("candle_interval") or "1M").upper()
+    if interval.endswith("MO"):
+        interval_minutes = int(interval[:-2]) * 30 * 24 * 60
+    elif interval.endswith("M"):
+        interval_minutes = int(interval[:-1])
+    elif interval.endswith("H"):
+        interval_minutes = int(interval[:-1]) * 60
+    elif interval.endswith("D"):
+        interval_minutes = int(interval[:-1]) * 24 * 60
+    elif interval.endswith("W"):
+        interval_minutes = int(interval[:-1]) * 7 * 24 * 60
+    else:
+        raise ValueError(f"Unsupported candle interval for close detection: {interval}")
+
+    timestamps = pd.to_datetime(df["date"], errors="coerce")
+    current_time = pd.Timestamp(now or datetime.now())
+    timestamp_timezone = timestamps.dt.tz
+    if timestamp_timezone is not None:
+        current_time = (
+            current_time.tz_localize(timestamp_timezone)
+            if current_time.tzinfo is None
+            else current_time.tz_convert(timestamp_timezone)
+        )
+    elif current_time.tzinfo is not None:
+        current_time = current_time.tz_localize(None)
+
+    completed = timestamps + pd.Timedelta(minutes=interval_minutes) <= current_time
+    completed_indices = np.flatnonzero(completed.to_numpy())
+    return int(completed_indices[-1]) if len(completed_indices) else None
 
 
 def fetch_latest_price_1m(symbol):
@@ -938,10 +977,22 @@ def get_underlying_reference_price():
 
 def option_has_flip_buy_signal(candle_symbol, idx_time):
     df, err = fetch_recent_candles(candle_symbol, CONFIG.get("segment", "SEGMENT_COMMODITY"))
-    if df is None or df.empty or len(df) < int(CONFIG.get("atr_period") or 10) + 2:
+    if df is None or df.empty:
+        if err:
+            print(f"[CANDLE DATA] {candle_symbol}: {err}", flush=True)
         return False, None, None, None, None, None, "NO_SIGNAL"
 
-    closed_idx = len(df) - 2
+    closed_idx = _latest_closed_candle_index(df)
+    if closed_idx is None or closed_idx + 1 < int(CONFIG.get("atr_period") or 10) + 2:
+        if err:
+            print(f"[CANDLE DATA] {candle_symbol}: {err}", flush=True)
+        return False, None, None, None, None, None, "NO_SIGNAL"
+    if closed_idx < len(df) - 1:
+        print(
+            f"[CANDLE FALLBACK] {candle_symbol} using last completed candle "
+            f"{df['date'].iloc[closed_idx]}",
+            flush=True,
+        )
     prev_idx = closed_idx - 1
     if prev_idx < 0:
         return False, None, None, None, None, None, "NO_SIGNAL"
@@ -1007,17 +1058,26 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
 
 def print_future_snapshot(future_symbol, idx_time=None):
     df, err = fetch_recent_candles(future_symbol, CONFIG.get("segment", "SEGMENT_COMMODITY"))
-    if df is None or df.empty or len(df) < int(CONFIG.get("atr_period") or 10) + 2:
+    if df is None or df.empty:
+        if err:
+            print(f"[CANDLE DATA] {future_symbol}: {err}")
+        print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
+        return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
+
+    last_idx = _latest_closed_candle_index(df)
+    if last_idx is None or last_idx + 1 < int(CONFIG.get("atr_period") or 10) + 2:
         if err:
             print(f"[CANDLE DATA] {future_symbol}: {err}")
         print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
         return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
 
     st_arr, dir_arr = supertrend(df, int(CONFIG.get("atr_period") or 10), float(CONFIG.get("factor") or 3.0))
-    last_idx = len(df) - 1
-    if last_idx < 0:
-        print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
-        return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
+    if last_idx < len(df) - 1:
+        print(
+            f"[CANDLE FALLBACK] {future_symbol} using last completed candle "
+            f"{df['date'].iloc[last_idx]}",
+            flush=True,
+        )
 
     candle_time = str(df["date"].iloc[last_idx])
     price = float(df["close"].iloc[last_idx])
@@ -1036,7 +1096,7 @@ def print_flat_market_snapshot(candle_symbol, side, idx_time, strike):
 
     ok, last_price, entry_open, entry_low, st_value, opt_trend, signal = signal_result
     if last_price is None:
-        print(f"[CANDLE DATA] {candle_symbol}: no usable candle data")
+        print(f"[CANDLE DATA] {candle_symbol}: no usable closed candle data")
         print(f"[OPTION] {candle_symbol} Price=NA ST=NA Signal={signal} Direction=NA")
         return {"ok": ok, "last_price": None, "entry_open": entry_open, "entry_low": entry_low, "st_value": st_value, "opt_trend": opt_trend, "signal": signal, "candle_symbol": candle_symbol, "side": side, "strike": strike}
 

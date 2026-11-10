@@ -29,13 +29,13 @@ CONFIG = {
     "max_lots_per_trade": 5,
     "expiry_fs": ["22Oct26", "29Oct26", "05Nov26", "12Nov26", "19Nov26", "26Nov26"],
     "order_expiry": ["26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
-    "entry_window_start": "09:30",
+    "entry_window_start": "09:15",
     "entry_window_end": "15:10",
     "run_end_time": "15:30",
     # Maximum option-premium budget for each trade, subject to available margin.
     "allocation_per_trade": 35000,
-    "milestone_points": 10,
-    "milestone_points_by_side": {"CE": 10, "PE": 10},
+    "milestone_points": 30,
+    "milestone_points_by_side": {"CE": 30, "PE": 30},
     "enable_actual_trade": False,
     "api_rate_limit_retry_delay": 5,
     "api_rate_limit_max_retries": 3,
@@ -184,9 +184,9 @@ def supertrend(frame, period, factor):
             else lower[index - 1]
         )
         direction[index] = (
-            1 if close[index] > upper[index - 1] else -1
+            1 if close[index] > upper[index] else -1
         ) if direction[index - 1] == -1 else (
-            -1 if close[index] < lower[index - 1] else 1
+            -1 if close[index] < lower[index] else 1
         )
         line[index] = lower[index] if direction[index] == 1 else upper[index]
     return line, direction
@@ -570,7 +570,8 @@ def _clear_live_state(config):
 
 def _wait_for_next_candle(config):
     now = _now_ist(config)
-    seconds = (INTERVAL_MINUTES - (now.minute % INTERVAL_MINUTES)) * 60 - now.second + 2
+    minutes_to_next_candle = 2 if now.minute % 2 else 1
+    seconds = minutes_to_next_candle * 60 - now.second + 2
     time.sleep(max(seconds, 1))
 
 

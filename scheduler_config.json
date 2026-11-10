@@ -60,17 +60,17 @@
       "description": "NIFTY 2-minute Supertrend long-option strategy",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:30",
+      "run_time_start": "09:15",
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "entry_window_start": "09:30",
+      "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",
       "lot_size": 65,
       "milestone_points_by_side": {
-        "CE": 30,
-        "PE": 30
+        "CE": 20,
+        "PE": 20
       },
       "enable_actual_trade": false,
       "atr_period": 10,
@@ -88,17 +88,17 @@
       "description": "SENSEX 2-minute Supertrend long-option strategy",
       "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_time_start": "09:30",
+      "run_time_start": "09:15",
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "entry_window_start": "09:30",
+      "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",
       "lot_size": 20,
       "milestone_points_by_side": {
-        "CE": 50,
-        "PE": 50
+        "CE": 30,
+        "PE": 30
       },
       "enable_actual_trade": false,
       "atr_period": 10,
@@ -183,11 +183,12 @@
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
       "run_time_start": "23:30",
       "run_time_end": "23:59",
+      "run_once_per_window": true,
       "api_delay_seconds": 0,
       "send_signal_emails": true,
       "send_daily_summary_on_stop": false,
       "email_recipients": ["gencinvestor@gmail.com"],
-      "notes": "Runs daily after 11:30 PM IST using daily candles and emails the combined list of stocks with a BUY signal."
+      "notes": "Runs daily from the 11:30 PM IST scheduled start, at most once per run window, using daily candles and emailing the combined list of BUY signals."
     }
   },
 

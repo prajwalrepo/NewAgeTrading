@@ -92,6 +92,36 @@ SCRIPTS_SCHEDULE = {
         "send_signal_emails": True,  # Email every generated buy/sell signal
     },
 
+    "NIFTYSupperBuy": {
+        "script_name": "NIFTYSupperBuy.py",
+        "description": "NIFTY 2-minute Supertrend long-option strategy",
+        "enabled": True,
+        "run_days": list(DayOfWeek)[:5],
+        "run_time_start": "09:15",
+        "run_time_end": "15:32",
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "entry_window_start": "09:15",
+        "entry_window_end": "15:10",
+        "run_end_time": "15:30",
+        "milestone_points_by_side": {"CE": 20, "PE": 20},
+    },
+
+    "SENSEXSupperBuy": {
+        "script_name": "SENSEXSupperBuy.py",
+        "description": "SENSEX 2-minute Supertrend long-option strategy",
+        "enabled": False,
+        "run_days": list(DayOfWeek)[:5],
+        "run_time_start": "09:15",
+        "run_time_end": "15:32",
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "entry_window_start": "09:15",
+        "entry_window_end": "15:10",
+        "run_end_time": "15:30",
+        "milestone_points_by_side": {"CE": 30, "PE": 30},
+    },
+
     "320trade": {
         "script_name": "320trade.py",
         "description": "Expiry-day 3:20 ITM CE+PE Strategy",
@@ -160,6 +190,7 @@ SCRIPTS_SCHEDULE = {
         "run_days": list(DayOfWeek),
         "run_time_start": "23:30",
         "run_time_end": "23:59",
+        "run_once_per_window": True,
         "api_delay_seconds": 0,
         "send_signal_emails": True,
         "send_daily_summary_on_stop": False,
@@ -559,12 +590,16 @@ def handle_process_state_changes(running_processes, script_launch_logged, blocke
         del running_processes[config_key]
         script_launch_logged.discard(config_key)
 
-        if completed_normally:
+        if completed_normally or SCRIPTS_SCHEDULE[config_key].get("run_once_per_window"):
             blocked_failures[config_key] = {
                 "signature": failure_signature,
                 "summary": failure_summary,
                 "blocked_at": get_ist_time(),
             }
+            if not completed_normally:
+                logger.warning(
+                    f"[BLOCKED] {config_key} will not be relaunched during this run window"
+                )
             continue
 
         if is_fatal:

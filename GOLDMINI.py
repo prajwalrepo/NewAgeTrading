@@ -41,8 +41,8 @@ CONFIG = {
     "future_symbols": [],
     "option_symbols": [],
 
-    "future_expiry_fs": ["05Nov26", "04Dec26", "05Jan27"],
-    "future_order_expiry": ["05NOV26", "04DEC26", "05JAN27"],
+    "future_expiry_fs": ["04Dec26", "05Jan27", "05Feb27"],
+    "future_order_expiry": ["04DEC26", "05JAN27", "05FEB27"],
     "option_expiry_fs": ["27Nov26", "29Dec26"],
     "option_order_expiry": ["27NOV26", "29DEC26"],
     "expiry_fs": [],

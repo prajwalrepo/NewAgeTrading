@@ -45,33 +45,27 @@ CONFIG = {
     "option_symbols": [],
 
     "future_expiry_fs": [
-        "26AUG26",
-        "25SEP26",
-        "27OCT26",
-        "24NOV26",
-        "28DEC26",
-        "25JAN27",
+        
+        "19NOV26",
+        "18DEC26",
+        "19JAN27",
     ],
     "future_order_expiry": [
-        "26AUG",
-        "25SEP",
-        "27OCT",
-        "24NOV",
-        "28DEC",
-        "25JAN",
+       
+        "19NOV",
+        "18DEC",
+        "19JAN",
     ],
     "option_expiry_fs": [
-        "18Sep26",
-        "19Oct26",
-        "19Nov26",
+        
+        "17Nov26",
+        "16Dec26",
     ],
     "option_order_expiry": [
-        "18SEP",
-        "19OCT",
-        "19NOV",
+       
+        "17OCT",
+        "16NOV",
     ],
-    "expiry_fs": ["18Sep26", "19Oct26", "19Nov26"],
-    "order_expiry": ["18SEP", "19OCT", "19NOV"],
     "strike_step": 50,
     "strike_start": 5000,
     "strike_end": 8000,

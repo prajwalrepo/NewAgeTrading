@@ -72,8 +72,6 @@ CONFIG = {
     ],
     "expiry_fs": ["18Sep26", "19Oct26", "19Nov26"],
     "order_expiry": ["18SEP", "19OCT", "19NOV"],
-    "option_expiry_window_trading_days": 7,
-
     "strike_step": 50,
     "strike_start": 5000,
     "strike_end": 8000,
@@ -236,6 +234,7 @@ pullback_reentry_tracker = {}
 last_max_profit_check_at = {}
 loop_candle_cache = {}
 loop_price_cache = {}
+last_price_data_warning_at = {}
 active_future_reference = {"entry": None, "symbol": None}
 
 
@@ -510,6 +509,19 @@ def _select_nearest_expiry(entries, now_dt=None):
     return min(pool, key=lambda e: abs((e["expiry_dt"].date() - today).days))
 
 
+def _select_future_for_option_expiry(future_entries, option_entry):
+    if not option_entry:
+        return None
+    option_expiry = option_entry["expiry_dt"].date()
+    eligible_futures = [
+        entry for entry in future_entries
+        if entry["expiry_dt"].date() >= option_expiry
+    ]
+    if not eligible_futures:
+        return None
+    return min(eligible_futures, key=lambda entry: entry["expiry_dt"].date())
+
+
 def build_candle_symbol(expiry_fs, strike, side):
     return f"{str(CONFIG['commodity_root']).upper()}-{expiry_fs}-{int(strike)}-{str(side).upper()}"
 
@@ -679,7 +691,13 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
 
     retries = max(0, int(CONFIG.get("api_rate_limit_max_retries", 3)))
     retry_delay = max(1, int(CONFIG.get("api_rate_limit_retry_delay", 10)))
-    for lookback in [int(lookback_minutes), max(int(lookback_minutes), 24 * 60), max(int(lookback_minutes), 3 * 24 * 60)]:
+    lookbacks = (
+        int(lookback_minutes),
+        max(int(lookback_minutes), 24 * 60),
+        max(int(lookback_minutes), 3 * 24 * 60),
+        max(int(lookback_minutes), 7 * 24 * 60),
+    )
+    for lookback in lookbacks:
         start_time = end_time - timedelta(minutes=lookback)
         for attempt in range(retries + 1):
             try:
@@ -712,7 +730,40 @@ def fetch_recent_candles(symbol, segment_name, lookback_minutes=None):
                 if len(df) >= int(CONFIG.get("atr_period") or 10) + 2:
                     _set_cached_candles(cache_key, df)
                     return df, None
-    return None, "Insufficient commodity candle data"
+    return None, "Insufficient commodity candle data after checking up to 7 days"
+
+
+def _latest_closed_candle_index(df, now=None):
+    """Return the newest candle whose configured interval has fully elapsed."""
+    interval = str(CONFIG.get("candle_interval") or "1M").upper()
+    if interval.endswith("MO"):
+        interval_minutes = int(interval[:-2]) * 30 * 24 * 60
+    elif interval.endswith("M"):
+        interval_minutes = int(interval[:-1])
+    elif interval.endswith("H"):
+        interval_minutes = int(interval[:-1]) * 60
+    elif interval.endswith("D"):
+        interval_minutes = int(interval[:-1]) * 24 * 60
+    elif interval.endswith("W"):
+        interval_minutes = int(interval[:-1]) * 7 * 24 * 60
+    else:
+        raise ValueError(f"Unsupported candle interval for close detection: {interval}")
+
+    timestamps = pd.to_datetime(df["date"], errors="coerce")
+    current_time = pd.Timestamp(now or datetime.now())
+    timestamp_timezone = timestamps.dt.tz
+    if timestamp_timezone is not None:
+        current_time = (
+            current_time.tz_localize(timestamp_timezone)
+            if current_time.tzinfo is None
+            else current_time.tz_convert(timestamp_timezone)
+        )
+    elif current_time.tzinfo is not None:
+        current_time = current_time.tz_localize(None)
+
+    completed = timestamps + pd.Timedelta(minutes=interval_minutes) <= current_time
+    completed_indices = np.flatnonzero(completed.to_numpy())
+    return int(completed_indices[-1]) if len(completed_indices) else None
 
 
 def fetch_latest_price_1m(symbol):
@@ -743,7 +794,27 @@ def fetch_latest_price_1m(symbol):
                 if not df.empty:
                     price = float(df["close"].iloc[-1])
                     _set_cached_price(symbol, price)
+                    last_price_data_warning_at.pop(symbol, None)
                     return price
+                reason = f"received {len(candles)} candle row(s), but none had usable OHLC values"
+            else:
+                reason = "response contained no candle rows"
+
+            now_ts = time.monotonic()
+            last_warning = last_price_data_warning_at.get(symbol, 0)
+            if now_ts - last_warning >= 60:
+                response_details = f"response_type={type(raw).__name__}"
+                if isinstance(raw, dict):
+                    response_details += f", keys={sorted(str(key) for key in raw.keys())}"
+                    api_message = raw.get("error") or raw.get("message")
+                    if api_message:
+                        response_details += f", message={str(api_message)[:200]}"
+                print(
+                    f"[CANDLE DATA] {symbol}: {reason}; groww_symbol={groww_symbol}; "
+                    f"interval=1minute; {response_details}",
+                    flush=True,
+                )
+                last_price_data_warning_at[symbol] = now_ts
             break
         except Exception as exc:
             if "rate limit" in str(exc).lower() and attempt < retries:
@@ -780,14 +851,18 @@ def build_contract_universe():
     if not option_entries and CONFIG.get("option_symbols"):
         option_entries = _normalize_symbol_array(CONFIG["option_symbols"], "option")
 
-    future_selected = _select_nearest_expiry(future_entries) if future_entries else None
-    if future_selected is None:
-        print("[ERROR] No valid CRUDEOILM futures expiry configured")
-        return False
-
     option_selected = _select_nearest_expiry(option_entries) if option_entries else None
     if option_selected is None:
         print("[ERROR] No valid CRUDEOILM options expiry configured")
+        return False
+
+    future_selected = _select_future_for_option_expiry(future_entries, option_selected)
+    if future_selected is None:
+        option_expiry = option_selected["expiry_dt"].strftime("%Y-%m-%d")
+        print(
+            f"[ERROR] No configured CRUDEOILM future expires on or after "
+            f"selected option expiry {option_expiry}"
+        )
         return False
 
     future_expiry_fs = future_selected.get("candle_expiry", future_selected.get("expiry_token"))
@@ -795,8 +870,13 @@ def build_contract_universe():
     expiry_fs = option_selected.get("candle_expiry", option_selected.get("expiry_token"))
     order_expiry = option_selected.get("order_expiry", option_selected.get("expiry_token"))
 
+    active_future_reference["entry"] = future_selected
+    active_future_reference["symbol"] = build_future_candle_symbol(future_expiry_fs)
     order_expiry_to_candle_expiry[order_expiry.upper()] = expiry_fs
-    print(f"[FUTURE] Selected CRUDEOILM future: candle={future_expiry_fs}, order={future_order_expiry}")
+    print(
+        f"[FUTURE] Selected CRUDEOILM future: candle={future_expiry_fs}, "
+        f"order={future_order_expiry} (paired with option expiry={expiry_fs})"
+    )
     print(f"[EXPIRY] Selected CRUDEOILM options: candle={expiry_fs}, order={order_expiry}")
 
     strikes = list(range(int(CONFIG["strike_start"]), int(CONFIG["strike_end"]) + int(CONFIG["strike_step"]), int(CONFIG["strike_step"])))
@@ -918,45 +998,35 @@ def clear_pullback_reentry(candle_symbol):
 
 
 def get_underlying_reference_price():
-    future_entries = _normalize_expiry_entries("future_expiry_fs", "future_order_expiry")
-    if not future_entries:
-        active_future_reference["entry"] = None
+    selected_entry = active_future_reference.get("entry")
+    if not isinstance(selected_entry, dict):
         active_future_reference["symbol"] = None
         return None, None
 
-    active_entry = active_future_reference.get("entry")
-    future_selected = _select_nearest_expiry(future_entries)
-    candidates = []
-
-    for entry in (active_entry, future_selected, *future_entries):
-        if not isinstance(entry, dict):
-            continue
-        candle_expiry = entry.get("candle_expiry")
-        if not candle_expiry:
-            continue
-        if any(existing.get("candle_expiry") == candle_expiry for existing in candidates):
-            continue
-        candidates.append(entry)
-
-    for entry in candidates:
-        future_symbol = build_future_candle_symbol(entry["candle_expiry"])
-        price = fetch_latest_price_1m(future_symbol)
-        if price is not None:
-            active_future_reference["entry"] = entry
-            active_future_reference["symbol"] = future_symbol
-            return price, future_symbol
-
-    active_future_reference["entry"] = future_selected
-    active_future_reference["symbol"] = build_future_candle_symbol(future_selected["candle_expiry"]) if future_selected else None
-    return None, active_future_reference["symbol"]
+    future_symbol = build_future_candle_symbol(selected_entry["candle_expiry"])
+    active_future_reference["symbol"] = future_symbol
+    price = fetch_latest_price_1m(future_symbol)
+    return price, future_symbol
 
 
 def option_has_flip_buy_signal(candle_symbol, idx_time):
     df, err = fetch_recent_candles(candle_symbol, CONFIG.get("segment", "SEGMENT_COMMODITY"))
-    if df is None or df.empty or len(df) < int(CONFIG.get("atr_period") or 10) + 2:
+    if df is None or df.empty:
+        if err:
+            print(f"[CANDLE DATA] {candle_symbol}: {err}", flush=True)
         return False, None, None, None, None, None, "NO_SIGNAL"
 
-    closed_idx = len(df) - 2
+    closed_idx = _latest_closed_candle_index(df)
+    if closed_idx is None or closed_idx + 1 < int(CONFIG.get("atr_period") or 10) + 2:
+        if err:
+            print(f"[CANDLE DATA] {candle_symbol}: {err}", flush=True)
+        return False, None, None, None, None, None, "NO_SIGNAL"
+    if closed_idx < len(df) - 1:
+        print(
+            f"[CANDLE FALLBACK] {candle_symbol} using last completed candle "
+            f"{df['date'].iloc[closed_idx]}",
+            flush=True,
+        )
     prev_idx = closed_idx - 1
     if prev_idx < 0:
         return False, None, None, None, None, None, "NO_SIGNAL"
@@ -1022,17 +1092,26 @@ def option_has_flip_buy_signal(candle_symbol, idx_time):
 
 def print_future_snapshot(future_symbol, idx_time=None):
     df, err = fetch_recent_candles(future_symbol, CONFIG.get("segment", "SEGMENT_COMMODITY"))
-    if df is None or df.empty or len(df) < int(CONFIG.get("atr_period") or 10) + 2:
+    if df is None or df.empty:
+        if err:
+            print(f"[CANDLE DATA] {future_symbol}: {err}")
+        print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
+        return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
+
+    last_idx = _latest_closed_candle_index(df)
+    if last_idx is None or last_idx + 1 < int(CONFIG.get("atr_period") or 10) + 2:
         if err:
             print(f"[CANDLE DATA] {future_symbol}: {err}")
         print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
         return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
 
     st_arr, dir_arr = supertrend(df, int(CONFIG.get("atr_period") or 10), float(CONFIG.get("factor") or 3.0))
-    last_idx = len(df) - 1
-    if last_idx < 0:
-        print(f"[{idx_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [FUT] {future_symbol} Price=NA ST=NA Direction=NA")
-        return {"ok": False, "candle_symbol": future_symbol, "price": None, "st_value": None, "direction": "NA"}
+    if last_idx < len(df) - 1:
+        print(
+            f"[CANDLE FALLBACK] {future_symbol} using last completed candle "
+            f"{df['date'].iloc[last_idx]}",
+            flush=True,
+        )
 
     candle_time = str(df["date"].iloc[last_idx])
     price = float(df["close"].iloc[last_idx])
@@ -1625,15 +1704,6 @@ def main():
     expiry_date, trading_days_remaining = get_option_expiry_window_status()
     if expiry_date is None:
         print("[SKIP] No upcoming CRUDEOILM options expiry is configured.")
-        return
-
-    expiry_window_days = int(CONFIG.get("option_expiry_window_trading_days", 7))
-    if trading_days_remaining > expiry_window_days:
-        print(
-            f"[SKIP] CRUDEOILM options expire on {expiry_date}; "
-            f"{trading_days_remaining} trading days remain, outside the "
-            f"{expiry_window_days}-day expiry window."
-        )
         return
 
     print(

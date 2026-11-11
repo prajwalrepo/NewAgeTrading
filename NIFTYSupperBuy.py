@@ -575,6 +575,101 @@ def _wait_for_next_candle(config):
     time.sleep(max(seconds, 1))
 
 
+def _close_position_at_run_end(api, config, position, dry_run):
+    if position is None:
+        return
+
+    is_live = config["enable_actual_trade"] and not dry_run and not position.get("paper_only", False)
+    if is_live:
+        live_position = next(
+            (
+                item for item in _get_live_positions(api, config)
+                if item["order_symbol"] == position["order_symbol"]
+            ),
+            None,
+        )
+        if live_position is None:
+            quantity = int(position["qty"]) + int(
+                position.get("unreconciled_manual_exit_qty", 0)
+            )
+            if not _record_manual_exit(api, config, position, quantity=quantity):
+                raise RuntimeError(
+                    f"Could not confirm or close open position {position['order_symbol']} at run end"
+                )
+            _clear_live_state(config)
+            return
+
+        position["qty"] = int(live_position["qty"])
+        if position["qty"] <= 0:
+            _clear_live_state(config)
+            return
+        try:
+            exit_price, order_id = _place_live_sell(
+                api, config, position, float(position["entry_price"])
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to close {position['order_symbol']} at run end: {exc}"
+            ) from exc
+        reason = f"Scheduled {config['run_end_time']} IST run-end exit; OrderID={order_id}"
+        position["exit_report"] = {
+            "price": exit_price,
+            "reason": reason,
+            "placed": True,
+            "time": _now_ist(config).strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        _emit_trade_signal(
+            config,
+            "SELL",
+            position,
+            exit_price,
+            reason,
+            True,
+            position["qty"],
+            buy_price=position["entry_price"],
+            sell_price=exit_price,
+            pnl=(exit_price - float(position["entry_price"])) * position["qty"],
+            signal_time=position["exit_report"]["time"],
+        )
+        _clear_live_state(config)
+        return
+
+    option_frame = _fetch_candles(
+        api, config, position["candle_symbol"], "SEGMENT_FNO"
+    )
+    closed_frame = option_frame.iloc[:-1] if len(option_frame) > 1 else option_frame
+    if closed_frame.empty:
+        raise RuntimeError(
+            f"Could not get an option price to close {position['order_symbol']} at run end"
+        )
+    exit_price = float(closed_frame["close"].iloc[-1])
+    if not math.isfinite(exit_price) or exit_price <= 0:
+        raise RuntimeError(
+            f"Invalid option price for run-end exit of {position['order_symbol']}: {exit_price}"
+        )
+
+    reason = f"Scheduled {config['run_end_time']} IST run-end exit; PAPER"
+    position["exit_report"] = {
+        "price": exit_price,
+        "reason": reason,
+        "placed": False,
+        "time": _now_ist(config).strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    _emit_trade_signal(
+        config,
+        "SELL",
+        position,
+        exit_price,
+        reason,
+        False,
+        position["qty"],
+        buy_price=position["entry_price"],
+        sell_price=exit_price,
+        pnl=(exit_price - float(position["entry_price"])) * int(position["qty"]),
+        signal_time=position["exit_report"]["time"],
+    )
+
+
 def _entry_candidate(frame, config):
     if len(frame) < int(config["atr_period"]) + 4:
         return None
@@ -810,62 +905,14 @@ def run_strategy(config, dry_run=False):
         run_end_time = datetime.strptime(config["run_end_time"], "%H:%M").time()
         if now.time() >= run_end_time:
             position_to_reconcile = active_position or pending_state
-            if position_to_reconcile and config["enable_actual_trade"] and not dry_run:
-                try:
-                    final_positions = _get_live_positions(api, config)
-                except Exception as exc:
-                    _log(config, f"[STOP RECONCILIATION ERROR] {type(exc).__name__}: {exc}")
-                    final_positions = None
-                final_matching = next(
-                    (
-                        item for item in final_positions or []
-                        if item["order_symbol"] == position_to_reconcile["order_symbol"]
-                    ),
-                    None,
+            try:
+                _close_position_at_run_end(
+                    api, config, position_to_reconcile, dry_run
                 )
-                if final_matching is not None:
-                    old_quantity = int(position_to_reconcile["qty"])
-                    final_quantity = int(final_matching["qty"])
-                    if final_quantity < old_quantity:
-                        closed_quantity = old_quantity - final_quantity
-                        if not _record_manual_exit(
-                            api, config, position_to_reconcile, quantity=closed_quantity
-                        ):
-                            position_to_reconcile["unreconciled_manual_exit_qty"] = (
-                                int(position_to_reconcile.get("unreconciled_manual_exit_qty", 0))
-                                + closed_quantity
-                            )
-                        position_to_reconcile["qty"] = final_quantity
-                    pending_quantity = int(
-                        position_to_reconcile.get("unreconciled_manual_exit_qty", 0)
-                    )
-                    if pending_quantity and _record_manual_exit(
-                        api, config, position_to_reconcile, quantity=pending_quantity
-                    ):
-                        position_to_reconcile["unreconciled_manual_exit_qty"] = 0
-                    _save_live_state(config, position_to_reconcile)
-                still_open = final_positions is None or final_matching is not None
-                if not still_open and _record_manual_exit(
-                    api,
-                    config,
-                    position_to_reconcile,
-                    quantity=(
-                        int(position_to_reconcile["qty"])
-                        + int(position_to_reconcile.get("unreconciled_manual_exit_qty", 0))
-                    ),
-                ):
-                    _clear_live_state(config)
-                    active_position = None
-                    pending_state = None
-                elif still_open:
-                    _log(
-                        config,
-                        f"[STOPPING WITH OPEN POSITION] {position_to_reconcile['order_symbol']} "
-                        f"Qty={position_to_reconcile['qty']}; "
-                        "position remains open and is not automatically squared off",
-                    )
-            elif active_position:
-                _log(config, f"[STOPPING WITH OPEN PAPER POSITION] {active_position['order_symbol']}")
+            except Exception as exc:
+                _log(config, f"[RUN-END EXIT ERROR] {type(exc).__name__}: {exc}")
+                raise
+            _log(config, "[STRATEGY COMPLETE] All open positions closed at 15:30 IST")
             _log(config, "[STOPPED] End of configured run window")
             return
         if now.time() < start_time:

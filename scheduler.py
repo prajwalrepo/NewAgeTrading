@@ -52,6 +52,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("SCHEDULER")
+FAILURE_ALERTS_SENT = set()
 
 
 class DayOfWeek(Enum):
@@ -223,6 +224,8 @@ CONFIG = {
         "send_daily_summary_on_stop": True,
         "send_weekly_summary_on_monday": True,
         "weekly_summary_recipients": [],
+        "daily_summary_recipients": [],
+        "error_recipients": [],
     },
 }
 
@@ -452,6 +455,29 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
         return False
 
 
+def email_script_failure(config_key, category, details):
+    """Send at most one alert of each failure category per script and day."""
+    email_cfg = CONFIG.get("email_notifications", {})
+    recipients = email_cfg.get("error_recipients")
+    if not recipients:
+        logger.warning(f"[EMAIL] No failure-alert recipients configured for {config_key}")
+        return False
+
+    today = get_ist_time().date().isoformat()
+    alert_key = (today, config_key, category)
+    if alert_key in FAILURE_ALERTS_SENT:
+        return False
+    FAILURE_ALERTS_SENT.add(alert_key)
+
+    subject = f"[SCRIPT ERROR] {config_key}: {category}"
+    body = (
+        f"Script: {config_key}\n"
+        f"Issue: {details}\n"
+        f"Time: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+    )
+    return send_email_notification(subject, body, recipients=recipients)
+
+
 def finalize_run_log(run_context, ended_at, reason, exit_code=None):
     """Finalize a per-script run log by appending stop status and renaming it."""
     run_log_path = Path(run_context["run_log_path"])
@@ -494,7 +520,10 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
     exit_code = process.poll()
     final_log_path = finalize_run_log(run_context, ended_at, reason, exit_code=exit_code)
     logger.info(f"[STOPPED] {run_context['config_key']} stopped | Reason={reason} | ExitCode={exit_code} | Log={final_log_path.name}")
-    if reason != "Scheduler stopped by user":
+    if reason not in {
+        "Scheduler stopped by user",
+        "Strategy skipped by configured startup guard",
+    }:
         email_daily_trade_summary(run_context, reason)
     return exit_code
 
@@ -506,6 +535,14 @@ def classify_process_exit(run_context, exit_code):
 
     recent_output = [line.strip() for line in run_context.get("recent_output", []) if str(line).strip()]
     normalized_output = "\n".join(recent_output[-10:]).lower()
+    if (
+        str(run_context.get("config_key") or "").upper()
+        in {"NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}
+        and exit_code == 0
+        and "[strategy complete] all open positions closed at 15:30 ist" in normalized_output
+    ):
+        return "strategy_complete", "SuperBuy positions closed at 15:30 IST", False
+
     if (
         str(run_context.get("config_key") or "").upper() == "SUPPERDAYSCAN"
         and exit_code == 0
@@ -519,6 +556,13 @@ def classify_process_exit(run_context, exit_code):
         and "[strategy complete] all open positions closed at 15:15 ist" in normalized_output
     ):
         return "strategy_complete", "Intraday positions closed at 15:15 IST", False
+
+    if (
+        str(run_context.get("config_key") or "").upper() in {"OILMINI", "GOLDMINI", "NATGASMINI"}
+        and exit_code == 0
+        and any("[SKIP]" in line for line in recent_output)
+    ):
+        return "strategy_skipped", "Commodity strategy skipped by a startup guard", False
 
     if (
         "authentication failed" in normalized_output
@@ -577,26 +621,41 @@ def handle_process_state_changes(running_processes, script_launch_logged, blocke
         run_context["failure_signature"] = failure_signature
         run_context["failure_summary"] = failure_summary
         completed_normally = failure_signature == "strategy_complete"
+        completed_skipped = failure_signature == "strategy_skipped"
         if completed_normally:
             logger.info(f"[COMPLETED] {config_key} finished normally")
+        elif completed_skipped:
+            logger.info(f"[SKIPPED] {config_key} exited normally after a startup guard")
         else:
             logger.error(f"[CRASH] {config_key} crashed (exit code: {returncode})")
+            failure_category = failure_signature.partition(":")[0]
+            email_script_failure(
+                config_key,
+                failure_category,
+                f"Process exited unexpectedly with exit code {returncode}.",
+            )
         stop_script(
             run_context,
             SCRIPTS_SCHEDULE[config_key],
-            reason="Strategy completed normally" if completed_normally else "Process exited unexpectedly",
+            reason=(
+                "Strategy completed normally"
+                if completed_normally
+                else "Strategy skipped by configured startup guard"
+                if completed_skipped
+                else "Process exited unexpectedly"
+            ),
             terminate_process=False,
         )
         del running_processes[config_key]
         script_launch_logged.discard(config_key)
 
-        if completed_normally or SCRIPTS_SCHEDULE[config_key].get("run_once_per_window"):
+        if completed_normally or completed_skipped or SCRIPTS_SCHEDULE[config_key].get("run_once_per_window"):
             blocked_failures[config_key] = {
                 "signature": failure_signature,
                 "summary": failure_summary,
                 "blocked_at": get_ist_time(),
             }
-            if not completed_normally:
+            if not completed_normally and not completed_skipped:
                 logger.warning(
                     f"[BLOCKED] {config_key} will not be relaunched during this run window"
                 )
@@ -1249,7 +1308,7 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
-    recipients = script_config.get("email_recipients")
+    recipients = email_cfg.get("daily_summary_recipients") or email_cfg.get("to_emails")
     config_key_upper = str(run_context.get("config_key") or "").upper()
     if config_key_upper in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
         body, html_body = _320trade_summary_email_content(
@@ -1666,6 +1725,11 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     process_buy_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
+        email_script_failure(
+            config_key,
+            "output_reader_failure",
+            f"Could not capture script output ({type(e).__name__}).",
+        )
 
 
 def launch_script(script_name, config_key):
@@ -1675,6 +1739,7 @@ def launch_script(script_name, config_key):
     
     if not script_path.exists():
         logger.error(f"[ERROR] Script not found: {script_path}")
+        email_script_failure(config_key, "launch_failure", "Configured script file was not found.")
         return None
     
     try:
@@ -1729,6 +1794,11 @@ def launch_script(script_name, config_key):
     
     except Exception as e:
         logger.error(f"[ERROR] Failed to launch {script_name}: {e}")
+        email_script_failure(
+            config_key,
+            "launch_failure",
+            f"Could not launch the script ({type(e).__name__}).",
+        )
         return None
 
 

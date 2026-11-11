@@ -26,8 +26,10 @@
     "send_on_signals": true,
     "send_daily_summary_on_stop": true,
     "send_weekly_summary_on_monday": true,
+    "daily_summary_recipients": ["gencinvestor@gmail.com"],
+    "error_recipients": ["basappafamily6@gmail.com"],
     "weekly_summary_recipients": ["gencinvestor@gmail.com"],
-    "notes": "Signal and daily summary emails contain trade details in the email body without workbook attachments. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell details in the email body and no workbook attachment."
+    "notes": "Individual buy/sell and milestone emails go to the configured per-script recipients. Per-script stop summaries go to the daily summary recipients; unexpected script failures go to the error recipients. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell details in the email body and no workbook attachment."
   },
 
   "scripts": {
@@ -64,6 +66,7 @@
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
+      "email_recipients": ["basappafamily6@gmail.com"],
       "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",
@@ -92,6 +95,7 @@
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
+      "email_recipients": ["basappafamily6@gmail.com"],
       "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",

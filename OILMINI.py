@@ -386,39 +386,91 @@ def get_option_expiry_window_status(now_dt=None):
     return expiry_date, trading_days_remaining
 
 
+def _parse_expiry_token(expiry_token):
+    txt = str(expiry_token or "").strip().upper()
+    if not txt:
+        return None
+    if txt.endswith("FUT"):
+        txt = txt[:-3]
+
+    if re.fullmatch(r"\d{2}[A-Z]{3}\d{2}", txt):
+        return datetime.strptime(txt, "%d%b%y")
+
+    if re.fullmatch(r"\d{2}[A-Z]{3}", txt):
+        today = datetime.now()
+        year = today.year
+        candidate = datetime.strptime(f"{txt}{year}", "%d%b%Y")
+        if candidate.date() < today.date() and year <= today.year:
+            candidate = datetime.strptime(f"{txt}{year + 1}", "%d%b%Y")
+        return candidate
+
+    return None
+
+
+def _is_plausible_strike(strike_value):
+    strike = int(strike_value)
+    if strike <= 0:
+        return False
+
+    configured_start = CONFIG.get("strike_start")
+    configured_end = CONFIG.get("strike_end")
+    if configured_start is not None and configured_end is not None:
+        start = float(configured_start)
+        end = float(configured_end)
+        if end > start and (strike < start * 0.25 or strike > end * 10):
+            return False
+    return True
+
+
 def _parse_order_symbol_token(symbol_text, *, kind="future"):
     txt = str(symbol_text or "").strip().upper()
     if not txt:
         return None
 
     if kind == "future":
-        match = re.search(r"([0-9]{2}[A-Z]{3}[0-9]{2})FUT$", txt)
-        if match:
-            expiry_token = match.group(1)
-            dt = datetime.strptime(expiry_token, "%d%b%y")
-            return {
-                "raw": txt,
-                "expiry_token": expiry_token,
-                "expiry_dt": dt,
-                "symbol_type": "future",
-            }
+        for pattern in (r"([0-9]{2}[A-Z]{3})FUT$", r"([0-9]{2}[A-Z]{3}[0-9]{2})FUT$"):
+            match = re.search(pattern, txt)
+            if match:
+                expiry_token = match.group(1)
+                dt = _parse_expiry_token(expiry_token)
+                if dt is not None:
+                    return {
+                        "raw": txt,
+                        "expiry_token": expiry_token,
+                        "expiry_dt": dt,
+                        "symbol_type": "future",
+                    }
         return None
 
-    match = re.search(r"([0-9]{2}[A-Z]{3}[0-9]{2})(\d+)(CE|PE)$", txt)
-    if match:
+    candidates = []
+    for pattern in (
+        r"([0-9]{2}[A-Z]{3})(\d+)(CE|PE)$",
+        r"([0-9]{2}[A-Z]{3}[0-9]{2})(\d+)(CE|PE)$",
+    ):
+        match = re.search(pattern, txt)
+        if not match:
+            continue
         expiry_token = match.group(1)
         strike = int(match.group(2))
         side = match.group(3)
-        dt = datetime.strptime(expiry_token, "%d%b%y")
-        return {
-            "raw": txt,
-            "expiry_token": expiry_token,
-            "expiry_dt": dt,
-            "strike": strike,
-            "side": side,
-            "symbol_type": "option",
-        }
-    return None
+        if _is_plausible_strike(strike):
+            candidates.append((expiry_token, strike, side))
+
+    if not candidates:
+        return None
+
+    expiry_token, strike, side = sorted(candidates, key=lambda item: (len(item[0]), -item[1]))[-1]
+    dt = _parse_expiry_token(expiry_token)
+    if dt is None:
+        return None
+    return {
+        "raw": txt,
+        "expiry_token": expiry_token,
+        "expiry_dt": dt,
+        "strike": strike,
+        "side": side,
+        "symbol_type": "option",
+    }
 
 
 def _normalize_symbol_array(symbols, kind):

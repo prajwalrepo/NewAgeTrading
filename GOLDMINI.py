@@ -1426,7 +1426,7 @@ def check_price_milestones():
             levels = range(lowest_level - 1, current_level - 1, -1)
             position["price_milestone_lowest_level"] = current_level
         else:
-            continue
+            levels = ()
 
         for level in levels:
             milestone_move = level * point_step
@@ -1439,6 +1439,29 @@ def check_price_milestones():
                 f"Move={milestone_move:+.2f} Direction={direction}",
                 flush=True,
             )
+
+        peak_price = float(
+            position.get("price_milestone_peak_price", position.get("highest_price", entry_price))
+            or entry_price
+        )
+        if float(current_price) > peak_price:
+            peak_price = float(current_price)
+            position["price_milestone_peak_price"] = peak_price
+            position["price_milestone_drawdown_level"] = 0
+        drawdown_level = int((peak_price - float(current_price) + 1e-9) / point_step)
+        previous_drawdown_level = int(position.get("price_milestone_drawdown_level", 0))
+        for level in range(previous_drawdown_level + 1, drawdown_level + 1):
+            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+            print(
+                f"[PRICE MILESTONE] Script=GOLDMINI Time={signal_time} "
+                f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
+                f"Peak={peak_price:.2f} Move={-level * point_step:+.2f} "
+                f"Direction=DOWN",
+                flush=True,
+            )
+        if drawdown_level > previous_drawdown_level:
+            position["price_milestone_drawdown_level"] = drawdown_level
 
 
 def live_signal_loop():

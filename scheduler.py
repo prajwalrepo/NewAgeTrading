@@ -73,7 +73,7 @@ SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
         "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 15:15 IST square-off",
-        "enabled": False,
+        "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:30",  # IST
         "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
@@ -84,7 +84,7 @@ SCRIPTS_SCHEDULE = {
     "SENSEXINTRA": {
         "script_name": "SENSEXINTRA.py",
         "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 15:15 IST square-off",
-        "enabled": False,
+        "enabled": True,
         "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
         "run_days_of_month": None,  # Every day of month
         "run_time_start": "09:30",
@@ -153,7 +153,7 @@ SCRIPTS_SCHEDULE = {
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": [23, 24, 25, 26, 27],
+        "run_days_of_month": None,
         "run_time_start": "15:30",
         "run_time_end": "23:35",
         "api_delay_seconds": 45,
@@ -765,7 +765,7 @@ TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
 )
 PRICE_MILESTONE_FIELDS = (
-    "Script", "Basis", "Time", "Symbol", "Side", "Entry", "Price", "Move", "Direction",
+    "Script", "Basis", "Time", "Symbol", "Side", "Entry", "Price", "Peak", "Move", "Direction",
 )
 PRICE_MILESTONE_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(PRICE_MILESTONE_FIELDS) + r")="
@@ -891,6 +891,81 @@ def parse_price_milestone(line):
         return None
     fields.setdefault("Basis", "OPTION")
     return fields
+
+
+def record_price_milestone(run_context, output_line):
+    """Track the latest milestone and highest price observed in milestone events."""
+    milestone = parse_price_milestone(output_line)
+    if milestone is None:
+        return
+
+    try:
+        price = float(milestone["Price"])
+    except ValueError:
+        logger.error(
+            "[REPORT] Invalid milestone price for %s: %s",
+            run_context.get("config_key"),
+            milestone["Price"],
+        )
+        return
+
+    run_context["last_price_milestone"] = milestone
+    key = (
+        milestone["Basis"].upper(),
+        milestone["Symbol"],
+        milestone["Side"].upper(),
+    )
+    recorded_high = float(milestone.get("Peak", price))
+    highest_prices = run_context.setdefault("highest_milestone_prices", {})
+    previous = highest_prices.get(key)
+    if previous is None or recorded_high > previous["price"]:
+        highest_prices[key] = {"price": recorded_high, "time": milestone["Time"]}
+
+
+def _price_milestone_summary(run_context):
+    """Format milestone details for text and HTML summary emails."""
+    milestone = run_context.get("last_price_milestone")
+    if milestone:
+        last_text = (
+            f"{milestone['Time']} | {milestone['Basis']} | {milestone['Symbol']} "
+            f"{milestone['Side']} | Price {milestone['Price']} | "
+            f"Move {milestone['Move']} ({milestone['Direction']})"
+        )
+        if milestone.get("Peak"):
+            last_text += f" | Peak {milestone['Peak']}"
+    else:
+        last_text = "None recorded during this run."
+
+    highest_prices = run_context.get("highest_milestone_prices", {})
+    if highest_prices:
+        high_text = "\n".join(
+            f"{basis} {symbol} {side}: {details['price']:.2f} at {details['time']}"
+            for (basis, symbol, side), details in sorted(highest_prices.items())
+        )
+        high_html = "".join(
+            "<li>"
+            f"{html.escape(basis)} {html.escape(symbol)} {html.escape(side)}: "
+            f"{details['price']:.2f} at {html.escape(str(details['time']))}"
+            "</li>"
+            for (basis, symbol, side), details in sorted(highest_prices.items())
+        )
+    else:
+        high_text = "None recorded during this run."
+        high_html = "<li>None recorded during this run.</li>"
+
+    text = (
+        "Price milestones\n"
+        f"Last recorded milestone: {last_text}\n"
+        "Highest price observed in milestone events:\n"
+        f"{high_text}"
+    )
+    html_section = (
+        "<h3>Price milestones</h3>"
+        f"<p>Last recorded milestone: {html.escape(last_text)}</p>"
+        "<p>Highest price observed in milestone events:</p>"
+        f"<ul>{high_html}</ul>"
+    )
+    return text, html_section
 
 
 def _trade_report_path(config_key, trade_time):
@@ -1318,14 +1393,16 @@ def email_daily_trade_summary(run_context, reason):
             (total, buys, sells, orders_placed),
             title=f"{run_context['config_key']} completed",
         )
+        milestone_text, milestone_html = _price_milestone_summary(run_context)
         send_email_notification(
             subject,
-            body,
-            html_body=html_body,
+            f"{body}\n\n{milestone_text}",
+            html_body=html_body.replace("</body></html>", f"{milestone_html}</body></html>"),
             recipients=recipients,
         )
         return
 
+    milestone_text, milestone_html = _price_milestone_summary(run_context)
     body = (
         f"Daily trading summary\n"
         f"Script: {run_context['config_key']}\n"
@@ -1334,13 +1411,15 @@ def email_daily_trade_summary(run_context, reason):
         f"Trade signals: {total}\n"
         f"Buy signals: {buys}\n"
         f"Sell signals: {sells}\n"
-        f"Orders placed: {orders_placed}"
+        f"Orders placed: {orders_placed}\n\n"
+        f"{milestone_text}"
     )
     html_sections = [
         f"<html><body><h2>{html.escape(subject)}</h2>"
         f"<p>{html.escape(body).replace(chr(10), '<br>')}</p>"
         "<h3>Trade details</h3>"
         + _trade_rows_html(_trade_report_rows(report_path))
+        + milestone_html
     ]
     if str(run_context.get("config_key") or "").upper() in {
         "NIFTYINTRA",
@@ -1577,7 +1656,8 @@ def process_price_milestone(config_key, output_line, script_config=None):
     basis = "Index" if milestone["Basis"].upper() == "INDEX" else "Option"
     subject = (
         f"[PRICE MOVE] {config_key} {basis} {milestone['Move']} points "
-        f"({milestone['Direction']})"
+        f"({milestone['Direction']}) - {milestone['Side']} {milestone['Symbol']} "
+        f"at {milestone['Time']}"
     )
     body = (
         f"{basis} price milestone\n\n"
@@ -1588,7 +1668,12 @@ def process_price_milestone(config_key, output_line, script_config=None):
         f"Side: {milestone['Side']}\n"
         f"Entry {'premium' if basis == 'Option' else 'index level'}: {milestone['Entry']}\n"
         f"Current {'premium' if basis == 'Option' else 'index level'}: {milestone['Price']}\n"
-        f"Move from entry: {milestone['Move']} points ({milestone['Direction']})\n"
+        + (
+            f"Retracement from peak: {abs(float(milestone['Move'])):g} points "
+            f"(peak {milestone['Peak']})\n"
+            if milestone.get("Peak") and milestone["Direction"].upper() == "DOWN"
+            else f"Move from entry: {milestone['Move']} points ({milestone['Direction']})\n"
+        )
     )
     recipients = script_config.get("email_recipients") if script_config else None
     send_email_notification(subject, body, recipients=recipients)
@@ -1719,6 +1804,7 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     logger.info(f"[{config_key}] {output}")
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
+                    record_price_milestone(run_context, output)
                     process_trade_signal(config_key, output, script_config)
                     process_trade_result(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
@@ -1777,6 +1863,8 @@ def launch_script(script_name, config_key):
             "started_at": started_at,
             "run_log_path": run_log_path,
             "recent_output": deque(maxlen=25),
+            "last_price_milestone": None,
+            "highest_milestone_prices": {},
             "failure_signature": None,
             "failure_summary": None,
         }

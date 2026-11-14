@@ -34,8 +34,8 @@ CONFIG = {
     "run_end_time": "15:30",
     # Maximum option-premium budget for each trade, subject to available margin.
     "allocation_per_trade": 35000,
-    "milestone_points": 20,
-    "milestone_points_by_side": {"CE": 20, "PE": 20},
+    "milestone_points": 15,
+    "milestone_points_by_side": {"CE": 15, "PE": 15},
     "enable_actual_trade": False,
     "api_rate_limit_retry_delay": 5,
     "api_rate_limit_max_retries": 3,
@@ -523,14 +523,19 @@ def _emit_trade_signal(
     )
 
 
-def _emit_milestone(config, position, option_price, threshold):
+def _emit_milestone(
+    config, position, option_price, threshold, direction="UP", peak_price=None
+):
+    move = threshold if direction == "UP" else -threshold
+    peak_field = f"Peak={float(peak_price):.2f} " if peak_price is not None else ""
     _log(
         config,
         f"[PRICE MILESTONE] Script={config['script_name']} Basis=OPTION "
         f"Time={_now_ist(config).strftime('%Y-%m-%dT%H:%M:%S')} "
         f"Symbol={position['candle_symbol']} Side={position['side']} "
         f"Entry={float(position['entry_price']):.2f} "
-        f"Price={float(option_price):.2f} Move={int(threshold)} Direction=UP",
+        f"Price={float(option_price):.2f} {peak_field}"
+        f"Move={move:+d} Direction={direction}",
     )
 
 
@@ -781,10 +786,37 @@ def _monitor_position(api, config, position, option_frame, dry_run):
     while favorable_move >= threshold:
         _emit_milestone(config, position, option_price, threshold)
         threshold += step
-    if threshold != int(position.get("next_milestone", step)):
+    state_changed = threshold != int(position.get("next_milestone", step))
+    if state_changed:
         position["next_milestone"] = threshold
-        if config["enable_actual_trade"] and not dry_run and not position.get("paper_only", False):
-            _save_live_state(config, position)
+    peak_price = float(position.get("milestone_peak_price", position["entry_price"]))
+    if option_price > peak_price:
+        peak_price = float(option_price)
+        position["milestone_peak_price"] = peak_price
+        position["next_drawdown_milestone"] = step
+        state_changed = True
+    next_drawdown = int(position.get("next_drawdown_milestone", step))
+    drawdown = peak_price - option_price
+    while drawdown + 1e-9 >= next_drawdown:
+        _emit_milestone(
+            config,
+            position,
+            option_price,
+            next_drawdown,
+            direction="DOWN",
+            peak_price=peak_price,
+        )
+        next_drawdown += step
+    if next_drawdown != int(position.get("next_drawdown_milestone", step)):
+        position["next_drawdown_milestone"] = next_drawdown
+        state_changed = True
+    if (
+        state_changed
+        and config["enable_actual_trade"]
+        and not dry_run
+        and not position.get("paper_only", False)
+    ):
+        _save_live_state(config, position)
     return False
 
 
@@ -801,6 +833,7 @@ def _make_live_position(config, live_record, prior_state=None):
             "side": "CE" if live_record["order_symbol"].endswith("CE") else "PE",
             "strike": 0,
             "next_milestone": _milestone_step(config, "CE" if live_record["order_symbol"].endswith("CE") else "PE"),
+            "next_drawdown_milestone": _milestone_step(config, "CE" if live_record["order_symbol"].endswith("CE") else "PE"),
             "sell_alert_sent": False,
             "monitorable": False,
         }
@@ -812,6 +845,8 @@ def _make_live_position(config, live_record, prior_state=None):
         "manual_exit_qty": 0,
         "unreconciled_manual_exit_qty": 0,
         "next_milestone": _milestone_step(config, contract["side"]),
+        "milestone_peak_price": float(live_record["entry_price"]),
+        "next_drawdown_milestone": _milestone_step(config, contract["side"]),
         "sell_alert_sent": False,
         "monitorable": True,
     }
@@ -824,6 +859,8 @@ def _make_live_position(config, live_record, prior_state=None):
             "manual_exit_qty",
             "unreconciled_manual_exit_qty",
             "next_milestone",
+            "milestone_peak_price",
+            "next_drawdown_milestone",
             "sell_alert_sent",
         ):
             if key in prior_state:
@@ -1135,6 +1172,8 @@ def run_strategy(config, dry_run=False):
                         "qty": quantity,
                         "entry_price": fill_price,
                         "next_milestone": _milestone_step(config, contract["side"]),
+                        "milestone_peak_price": fill_price,
+                        "next_drawdown_milestone": _milestone_step(config, contract["side"]),
                         "entry_time": _now_ist(config).isoformat(),
                         "sell_alert_sent": False,
                         "monitorable": True,

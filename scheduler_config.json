@@ -36,25 +36,25 @@
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 3:15 PM IST square-off",
-      "enabled": false,
+      "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
       "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Runs Monday, Tuesday, and Friday from 09:30 IST. No new entries after the strategy cutoff; open positions are squared off at 15:15 IST. Scheduler allows until 15:16 for square-off completion. Immediate emails are enabled for each buy and sell signal."
+      "notes": "Runs Monday, Tuesday, and Friday from 09:30 IST in paper-only mode. No new entries after the strategy cutoff; open paper positions are squared off at 15:15 IST. Scheduler allows until 15:16 for square-off completion. Immediate emails are enabled for each buy and sell signal."
     },
 
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
       "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 3:15 PM IST square-off",
-      "enabled": false,
+      "enabled": true,
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:30",
       "run_time_end": "15:16",
       "api_delay_seconds": 10,
       "send_signal_emails": true,
-      "notes": "Runs Wednesday and Thursday from 09:30 IST. No new entries at or after 15:15 IST. Open positions are squared off then; scheduler allows until 15:16 for completion. Immediate emails are enabled for each buy and sell signal."
+      "notes": "Runs Wednesday and Thursday from 09:30 IST in paper-only mode. No new entries at or after 15:15 IST. Open paper positions are squared off then; scheduler allows until 15:16 for completion. Immediate emails are enabled for each buy and sell signal."
     },
 
     "NIFTYSupperBuy": {
@@ -72,8 +72,8 @@
       "run_end_time": "15:30",
       "lot_size": 65,
       "milestone_points_by_side": {
-        "CE": 20,
-        "PE": 20
+        "CE": 15,
+        "PE": 15
       },
       "enable_actual_trade": false,
       "atr_period": 10,
@@ -83,7 +83,7 @@
       "order_expiry": ["26O19", "26OCT", "26N03", "26N09", "26N17", "26NOV"],
       "api_rate_limit_retry_delay": 5,
       "api_rate_limit_max_retries": 3,
-      "notes": "Runs Monday through Friday in paper-only mode. BUY confirmation uses two closed 2-minute option candles; buy/sell signals and option-price milestones are emailed, and the daily summary includes completed-trade P&L."
+      "notes": "Runs Monday through Friday in paper-only mode. BUY confirmation uses two closed 2-minute option candles; milestone emails trigger every 15 option points up from entry and down from the running peak. The daily summary includes completed-trade P&L."
     },
 
     "SENSEXSupperBuy": {
@@ -101,8 +101,8 @@
       "run_end_time": "15:30",
       "lot_size": 20,
       "milestone_points_by_side": {
-        "CE": 30,
-        "PE": 30
+        "CE": 20,
+        "PE": 20
       },
       "enable_actual_trade": false,
       "atr_period": 10,
@@ -112,7 +112,7 @@
       "order_expiry": ["26O22", "26OCT", "26N05", "26N12", "26N19", "26NOV"],
       "api_rate_limit_retry_delay": 5,
       "api_rate_limit_max_retries": 3,
-      "notes": "Runs Wednesday and Thursday in paper-only mode."
+      "notes": "Runs Wednesday and Thursday in paper-only mode. Milestone emails trigger every 20 option points up from entry and down from the running peak."
     },
 
     "320trade": {
@@ -132,13 +132,13 @@
       "description": "Crude Oil Mini Options Strategy (MCX)",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [11, 12, 13],
+      "run_days_of_month": null,
       "run_time_start": "15:30",
       "run_time_end": "23:35",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts first to reduce Groww API contention. Paper-only by default."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
     },
 
     "GOLDMINI": {
@@ -146,13 +146,13 @@
       "description": "Gold Mini Options Strategy (MCX)",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [11, 12, 13],
+      "run_days_of_month": null,
       "run_time_start": "15:30",
       "run_time_end": "23:35",
       "api_delay_seconds": 45,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts after OILMINI to reduce Groww API contention. Paper-only by default."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
     },
 
     "NATGASMINI": {
@@ -160,19 +160,19 @@
       "description": "Natural Gas Mini Options Strategy (MCX)",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [11, 12, 13],
+      "run_days_of_month": null,
       "run_time_start": "15:30",
       "run_time_end": "23:35",
       "api_delay_seconds": 90,
       "send_signal_emails": true,
       "email_recipients": ["basappafamily6@gmail.com"],
-      "notes": "Runs in its existing day-of-month window from 15:30 to 23:30 IST; scheduler allows until 23:35 for square-off/report completion. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only by default."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 1-point move from entry or down from the running peak. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only."
     },
 
     "SupperWeekScan": {
       "script_name": "SupperWeekScan.py",
       "description": "Weekly stock scanner using Groww weekly candles",
-      "enabled": false,
+      "enabled": true,
       "run_days": ["FRIDAY"],
       "run_time_start": "23:00",
       "run_time_end": "23:05",
@@ -183,7 +183,7 @@
     "SupperDayScan": {
       "script_name": "SupperDayScan.py",
       "description": "Daily-candle scanner for Supertrend BUY signals",
-      "enabled": false,
+      "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
       "run_time_start": "23:30",
       "run_time_end": "23:59",

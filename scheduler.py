@@ -436,15 +436,21 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
                     filename=attachment.name,
                 )
 
+    stage = "SMTP connection"
     try:
         if email_cfg.get("use_ssl", True):
             with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
+                stage = "SMTP authentication"
                 smtp.login(smtp_username, smtp_password)
+                stage = "message submission"
                 smtp.send_message(message)
         else:
             with smtplib.SMTP(smtp_host, smtp_port) as smtp:
+                stage = "STARTTLS negotiation"
                 smtp.starttls()
+                stage = "SMTP authentication"
                 smtp.login(smtp_username, smtp_password)
+                stage = "message submission"
                 smtp.send_message(message)
         logger.info(f"[EMAIL] Sent: {subject}")
         return True
@@ -452,7 +458,10 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
         logger.warning(f"[EMAIL] Interrupted while sending '{subject}'")
         return False
     except Exception as exc:
-        logger.error(f"[EMAIL] Failed to send '{subject}': {exc}")
+        logger.error(
+            f"[EMAIL] Failed during {stage} for '{subject}' "
+            f"({type(exc).__name__}): {exc}"
+        )
         return False
 
 

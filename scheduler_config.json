@@ -135,7 +135,7 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Uses 2-minute candles, books maximum profit at 50 points, and sends milestone emails at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
     },
 
     "GOLDMINI": {
@@ -148,7 +148,7 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 45,
       "send_signal_emails": true,
-      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Uses 3-minute candles; milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
     },
 
     "NATGASMINI": {
@@ -161,7 +161,7 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 90,
       "send_signal_emails": true,
-      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 1-point move from entry or down from the running peak. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Uses 3-minute candles; milestone emails trigger at each 1-point move from entry or down from the running peak. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only."
     },
 
     "SupperWeekScan": {

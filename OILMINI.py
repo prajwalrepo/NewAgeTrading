@@ -70,7 +70,7 @@ CONFIG = {
     "strike_start": 5000,
     "strike_end": 8000,
 
-    "candle_interval": "3M",
+    "candle_interval": "2M",
     "atr_period": 10,
     "factor": 3.0,
 
@@ -112,7 +112,7 @@ CONFIG = {
     "trailing_stop_loss_points": 10,
     "trailing_stop_trigger_points": 20,
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 3.0,
+    "max_profit_booking_points": 50.0,
     "max_profit_check_interval_sec": 200,
     "price_milestone_emails_enabled": True,
     "price_milestone_points": 10.0,

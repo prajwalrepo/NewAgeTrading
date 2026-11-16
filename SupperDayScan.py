@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Scan a configurable stock list for daily Supertrend BUY signals."""
+"""Scan a configurable stock list for daily Supertrend BUY and SELL signals."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -263,6 +264,9 @@ def calculate_supertrend(data: pd.DataFrame):
             direction[index] = -1 if close[index] < final_lowerband[index] else 1
 
     work["Direction"] = direction
+    work["Supertrend"] = np.where(
+        direction == 1, final_lowerband, final_upperband
+    )
     last, previous = work.iloc[-1], work.iloc[-2]
     signal = None
     if last["Direction"] == 1 and previous["Direction"] == -1:
@@ -272,9 +276,9 @@ def calculate_supertrend(data: pd.DataFrame):
     return signal, last
 
 
-def scan_daily_buy_signals(growwapi):
-    """Return stocks whose daily Supertrend flipped to BUY."""
-    buy_signals = []
+def scan_daily_signals(growwapi):
+    """Return stocks whose daily Supertrend flipped to BUY or SELL."""
+    signals = []
     total = len(WATCHLIST)
     for index, symbol in enumerate(WATCHLIST, start=1):
         print(f"[SCAN] {index}/{total} {symbol} | FETCHING", flush=True)
@@ -299,13 +303,22 @@ def scan_daily_buy_signals(growwapi):
             f"SIGNAL={signal_text}",
             flush=True,
         )
-        if signal == "BUY":
-            buy_signals.append(symbol)
-    return buy_signals
+        if signal in {"BUY", "SELL"}:
+            candle_time = pd.Timestamp(latest["date"]).date().isoformat()
+            signals.append(
+                {
+                    "symbol": symbol,
+                    "side": signal,
+                    "date": candle_time,
+                    "price": float(price),
+                    "supertrend": float(latest["Supertrend"]),
+                }
+            )
+    return signals
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Daily-candle Supertrend BUY scanner")
+    parser = argparse.ArgumentParser(description="Daily-candle Supertrend BUY/SELL scanner")
     parser.add_argument("--dry-run", action="store_true", help="Print results without sending email")
     args = parser.parse_args()
 
@@ -320,18 +333,19 @@ def main():
         return 1
 
     print(f"[SCAN] Starting daily Supertrend scan for {len(WATCHLIST)} symbols", flush=True)
-    buy_signals = scan_daily_buy_signals(growwapi)
+    signals = scan_daily_signals(growwapi)
     trading_date = datetime.now().date().isoformat()
-    stocks = ",".join(buy_signals) if buy_signals else "NONE"
+    signal_results = json.dumps(signals, separators=(",", ":"))
     if args.dry_run:
-        print(f"[DRY RUN] SupperDayScan {trading_date} BUY stocks: {stocks}", flush=True)
+        print(f"[DRY RUN] SupperDayScan {trading_date} results: {signal_results}", flush=True)
     else:
         print(
-            f"[BUY SCAN RESULTS] Script=SupperDayScan Date={trading_date} Stocks={stocks}",
+            f"[SCAN RESULTS] Script=SupperDayScan Period=daily "
+            f"ScanDate={trading_date} Results={signal_results}",
             flush=True,
         )
     print(
-        f"[SCAN COMPLETE] SupperDayScan found {len(buy_signals)} daily BUY signal(s).",
+        f"[SCAN COMPLETE] SupperDayScan found {len(signals)} daily BUY/SELL signal(s).",
         flush=True,
     )
     return 0

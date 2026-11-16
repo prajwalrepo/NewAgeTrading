@@ -2,13 +2,14 @@
 """Weekly stock scanner for selected Indian stocks.
 
 This scanner reads weekly OHLC candles through the Groww API, applies a weekly
-Supertrend-style proxy, and emits a scheduler-readable trade signal when the
-weekly trend flips. The main scheduler runs the script every Friday at 11:00 PM IST.
+Supertrend-style proxy, and reports weekly BUY/SELL flips. The main scheduler
+runs the script every Friday at 11:00 PM IST.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -652,21 +653,6 @@ def calculate_supertrend(df: pd.DataFrame):
     return signal, last
 
 
-def emit_signal(symbol: str, side: str, price: float, reason: str, time_value: datetime | str):
-    """Emit a scheduler-readable trade signal."""
-    if isinstance(time_value, datetime):
-        signal_time = time_value.strftime("%Y-%m-%dT%H:%M:%S")
-    else:
-        signal_time = str(time_value)
-
-    print(
-        "[TRADE SIGNAL] "
-        f"Script=SupperWeekScan Side={side} Time={signal_time} Symbol={symbol} "
-        f"Strike=NA Price={float(price):.2f} "
-        f"Reason={reason} Lots=1 LotSize=1 Qty=1 OrderPlaced=YES"
-    )
-
-
 def scan_weekly_supertrend():
     """Scan the watchlist and return any weekly BUY/SELL signals."""
     results = []
@@ -704,10 +690,17 @@ def scan_weekly_supertrend():
         if signal is None:
             continue
 
-        reason = f"Weekly Supertrend flip {signal} on {symbol}"
         price = float(price)
         signal_time = pd.Timestamp(latest["date"]).to_pydatetime()
-        results.append((symbol, signal, price, reason, signal_time))
+        results.append(
+            {
+                "symbol": symbol,
+                "side": signal,
+                "date": signal_time.date().isoformat(),
+                "price": price,
+                "supertrend": float(st_value),
+            }
+        )
 
     return results
 
@@ -727,13 +720,13 @@ def main():
     print(f"[SCAN] Starting weekly supertrend scan for {len(WATCHLIST)} symbols")
     triggers = scan_weekly_supertrend()
 
-    if not triggers:
-        print("[SCAN] No weekly BUY/SELL supertrend trigger found for the current watchlist.")
-        return 0
-
-    for symbol, side, price, reason, signal_time in triggers:
-        emit_signal(symbol, side, price, reason, signal_time)
-
+    signal_results = json.dumps(triggers, separators=(",", ":"))
+    scan_date = datetime.now().date().isoformat()
+    print(
+        f"[SCAN RESULTS] Script=SupperWeekScan Period=weekly "
+        f"ScanDate={scan_date} Results={signal_results}",
+        flush=True,
+    )
     print(f"[SCAN] Found {len(triggers)} weekly signal(s).")
     return 0
 

@@ -20,16 +20,16 @@
     "smtp_username": "gencinvestor@gmail.com",
     "smtp_password": "powg jovk hxry eoaq",
     "from_email": "gencinvestor@gmail.com",
-    "to_emails": [
-      "gencinvestor@gmail.com"
-    ],
+    "to_emails": ["gencinvestor@gmail.com"],
+    "signal_recipients": ["basappafamily6@gmail.com"],
+    "scan_report_recipients": ["gencinvestor@gmail.com"],
     "send_on_signals": true,
     "send_daily_summary_on_stop": true,
     "send_weekly_summary_on_monday": true,
     "daily_summary_recipients": ["gencinvestor@gmail.com"],
     "error_recipients": ["basappafamily6@gmail.com"],
     "weekly_summary_recipients": ["gencinvestor@gmail.com"],
-    "notes": "Individual buy/sell and milestone emails go to the configured per-script recipients. Per-script stop summaries go to the daily summary recipients; unexpected script failures go to the error recipients. Weekly summary emails are sent Monday with the previous Monday-Sunday buy/sell details in the email body and no workbook attachment."
+    "notes": "Generated trade signals, order status, and price milestones go to signal_recipients. Daily and weekly scanner reports and trade summaries go to gencinvestor. Script failures go to error_recipients."
   },
 
   "scripts": {
@@ -66,7 +66,6 @@
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "email_recipients": ["basappafamily6@gmail.com"],
       "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",
@@ -95,7 +94,6 @@
       "run_time_end": "15:32",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "email_recipients": ["basappafamily6@gmail.com"],
       "entry_window_start": "09:15",
       "entry_window_end": "15:10",
       "run_end_time": "15:30",
@@ -137,7 +135,6 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "email_recipients": ["basappafamily6@gmail.com"],
       "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
     },
 
@@ -151,7 +148,6 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 45,
       "send_signal_emails": true,
-      "email_recipients": ["basappafamily6@gmail.com"],
       "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
     },
 
@@ -165,24 +161,23 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 90,
       "send_signal_emails": true,
-      "email_recipients": ["basappafamily6@gmail.com"],
       "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Milestone emails trigger at each 1-point move from entry or down from the running peak. Starts after OILMINI and GOLDMINI to reduce Groww API contention. Paper-only."
     },
 
     "SupperWeekScan": {
       "script_name": "SupperWeekScan.py",
-      "description": "Weekly stock scanner using Groww weekly candles",
+      "description": "Weekly stock scanner using Groww weekly candles, reporting BUY and SELL signals",
       "enabled": true,
       "run_days": ["FRIDAY"],
       "run_time_start": "23:00",
       "run_time_end": "23:05",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Weekly scanner uses Groww weekly candles and sends immediate signal emails on Friday 11:00 PM IST."
+      "notes": "Weekly scanner reports all BUY and SELL Supertrend flips, including empty scans, to the configured scan report recipient. It does not place orders."
     },
     "SupperDayScan": {
       "script_name": "SupperDayScan.py",
-      "description": "Daily-candle scanner for Supertrend BUY signals",
+      "description": "Daily-candle scanner for Supertrend BUY and SELL signals",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
       "run_time_start": "23:30",
@@ -191,8 +186,7 @@
       "api_delay_seconds": 0,
       "send_signal_emails": true,
       "send_daily_summary_on_stop": false,
-      "email_recipients": ["gencinvestor@gmail.com"],
-      "notes": "Runs daily from the 11:30 PM IST scheduled start, at most once per run window, using daily candles and emailing the combined list of BUY signals."
+      "notes": "Runs daily from the 11:30 PM IST scheduled start, at most once per run window, and emails a combined BUY/SELL scan report, including empty scans, to the configured scan report recipient. It does not place orders."
     }
   },
 

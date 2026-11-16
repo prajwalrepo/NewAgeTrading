@@ -195,7 +195,6 @@ SCRIPTS_SCHEDULE = {
         "api_delay_seconds": 0,
         "send_signal_emails": True,
         "send_daily_summary_on_stop": False,
-        "email_recipients": ["gencinvestor@gmail.com"],
     },
 }
 
@@ -220,6 +219,8 @@ CONFIG = {
         "smtp_password": "",
         "from_email": "",
         "to_emails": [],
+        "signal_recipients": [],
+        "scan_report_recipients": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
         "send_weekly_summary_on_monday": True,
@@ -764,6 +765,27 @@ TRADE_SIGNAL_FIELDS = (
 TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
 )
+GENERATED_SIGNAL_PATTERNS = (
+    re.compile(
+        r"\[(?:TRADE SETUP|STRATEGY SIGNAL)\]\s+Script=\S+.*?"
+        r"\bSide=(?P<side>BUY|SELL)\b.*?\bSymbol=(?P<symbol>\S+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\[(?P<side>BUY|SELL) SIGNAL\]\s+(?P<symbol>\S+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\[SIGNAL\]\s+\S+\s+(?P<side>BUY|SELL)\s+(?P<symbol>\S+)",
+        re.IGNORECASE,
+    ),
+)
+ORDER_CONFIRMATION_PATTERN = re.compile(
+    r"\[(?P<event>ORDER CONFIRMED|BUY CONFIRMED|PAPER BUY TRACKED)\]\s*(?P<details>.*)",
+    re.IGNORECASE,
+)
+ORDER_STATUS_FROM_TRADE_SIGNAL = {"NIFTYINTRA", "SENSEXINTRA", "320TRADE"}
+ORDER_STATUS_AFTER_SIGNAL = {"OILMINI", "GOLDMINI", "NATGASMINI"}
 PRICE_MILESTONE_FIELDS = (
     "Script", "Basis", "Time", "Symbol", "Side", "Entry", "Price", "Peak", "Move", "Direction",
 )
@@ -874,6 +896,46 @@ def parse_trade_signal(line):
     }
 
 
+def parse_generated_signal(line):
+    """Parse strategy-specific signal-generation output not covered by TRADE SIGNAL."""
+    for pattern in GENERATED_SIGNAL_PATTERNS:
+        match = pattern.search(line)
+        if match:
+            return {
+                "Side": match.group("side").upper(),
+                "Symbol": match.group("symbol"),
+                "Output": line,
+            }
+    return None
+
+
+def parse_order_confirmation(line):
+    """Parse explicit live or paper buy confirmation output."""
+    match = ORDER_CONFIRMATION_PATTERN.search(line)
+    if match is None:
+        return None
+
+    event = match.group("event").upper()
+    details = match.group("details").strip()
+    if event == "ORDER CONFIRMED":
+        side_match = re.search(r"\b(BUY|SELL)\b", details, re.IGNORECASE)
+        if side_match is None:
+            return None
+        side = side_match.group(1).upper()
+        symbol = details[side_match.end():].strip().split(maxsplit=1)
+        symbol = symbol[0] if symbol else "UNKNOWN"
+    else:
+        side = "BUY"
+        symbol = details.split(maxsplit=1)[0] if details else "UNKNOWN"
+
+    return {
+        "Event": event,
+        "Side": side,
+        "Symbol": symbol,
+        "Output": line,
+    }
+
+
 def parse_price_milestone(line):
     """Parse one structured price-milestone event from script output."""
     if "[PRICE MILESTONE]" not in line:
@@ -886,7 +948,9 @@ def parse_price_milestone(line):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
         fields[match.group(1)] = line[start:end].strip()
 
-    required_fields = tuple(field for field in PRICE_MILESTONE_FIELDS if field != "Basis")
+    required_fields = tuple(
+        field for field in PRICE_MILESTONE_FIELDS if field not in {"Basis", "Peak"}
+    )
     if any(not fields.get(field) for field in required_fields):
         return None
     fields.setdefault("Basis", "OPTION")
@@ -1584,12 +1648,21 @@ def email_trade_signal(config_key, trade, recipients=None):
     symbol = trade.get("Symbol") or "UNKNOWN"
     trade_time = trade.get("Time") or "UNKNOWN"
     is_paper = trade.get("Order Placed", "").upper() != "YES"
-    mode = "Paper trade" if is_paper else "Live order executed"
-    subject_prefix = "[PAPER TRADE]" if is_paper else "[LIVE TRADE]"
+    if str(config_key).upper() == "SUPPERWEEKSCAN":
+        mode = "Scan signal (no order)"
+        subject_prefix = "[SCAN SIGNAL]"
+    else:
+        mode = "Paper signal/trade (no live order)" if is_paper else "Live order placed"
+        subject_prefix = "[PAPER TRADE]" if is_paper else "[LIVE TRADE]"
     subject = f"{subject_prefix} {config_key} {side} {symbol} at {trade_time}"
     details = (
         ("Script", config_key),
-        ("Action", "BUY signal" if side.upper() == "BUY" else "SELL / position closed"),
+        (
+            "Action",
+            f"{side.upper()} scan signal"
+            if str(config_key).upper() == "SUPPERWEEKSCAN"
+            else "BUY signal" if side.upper() == "BUY" else "SELL / position closed",
+        ),
         ("Trade mode", mode),
         ("Time", trade_time),
         ("Symbol", symbol),
@@ -1637,9 +1710,89 @@ def process_trade_signal(config_key, output_line, script_config=None):
         logger.error(f"[REPORT] Failed to record monthly trade signal for {config_key}: {exc}")
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
-    if is_new and send_on_signals and script_emails_enabled:
-        recipients = script_config.get("email_recipients") if script_config else None
+    order_status_follows_signal = (
+        config_key.upper() in ORDER_STATUS_AFTER_SIGNAL
+        and trade["Side"] == "BUY"
+    )
+    is_weekly_scan = config_key.upper() == "SUPPERWEEKSCAN"
+    if (
+        is_new
+        and send_on_signals
+        and script_emails_enabled
+        and not order_status_follows_signal
+        and not is_weekly_scan
+    ):
+        recipients = _signal_email_recipients()
         email_trade_signal(config_key, trade, recipients=recipients)
+
+
+def _signal_email_recipients():
+    email_cfg = CONFIG.get("email_notifications", {})
+    return email_cfg.get("signal_recipients") or email_cfg.get("to_emails")
+
+
+def _scan_report_recipients():
+    email_cfg = CONFIG.get("email_notifications", {})
+    return email_cfg.get("scan_report_recipients") or email_cfg.get("to_emails")
+
+
+def _signal_emails_enabled(script_config):
+    return (
+        CONFIG.get("email_notifications", {}).get("send_on_signals", False)
+        and (not script_config or script_config.get("send_signal_emails", True))
+    )
+
+
+def process_generated_signal(config_key, output_line, script_config=None):
+    """Email raw strategy setup signals as they are generated."""
+    signal = parse_generated_signal(output_line)
+    if signal is None or not _signal_emails_enabled(script_config):
+        return
+
+    subject = (
+        f"[SIGNAL GENERATED] {config_key} {signal['Side']} {signal['Symbol']}"
+    )
+    body = (
+        f"Signal generated\n\n"
+        f"Script: {config_key}\n"
+        f"Side: {signal['Side']}\n"
+        f"Symbol: {signal['Symbol']}\n\n"
+        f"Script output:\n{signal['Output']}"
+    )
+    send_email_notification(
+        subject,
+        body,
+        recipients=_signal_email_recipients(),
+    )
+
+
+def process_order_confirmation(config_key, output_line, script_config=None):
+    """Email confirmed live orders and paper entries."""
+    confirmation = parse_order_confirmation(output_line)
+    if (
+        confirmation is None
+        or config_key.upper() in ORDER_STATUS_FROM_TRADE_SIGNAL
+        or not _signal_emails_enabled(script_config)
+    ):
+        return
+
+    subject = (
+        f"[ORDER STATUS] {config_key} {confirmation['Side']} "
+        f"{confirmation['Symbol']} ({confirmation['Event']})"
+    )
+    body = (
+        f"Order confirmation\n\n"
+        f"Script: {config_key}\n"
+        f"Event: {confirmation['Event']}\n"
+        f"Side: {confirmation['Side']}\n"
+        f"Symbol: {confirmation['Symbol']}\n\n"
+        f"Script output:\n{confirmation['Output']}"
+    )
+    send_email_notification(
+        subject,
+        body,
+        recipients=_signal_email_recipients(),
+    )
 
 
 def process_price_milestone(config_key, output_line, script_config=None):
@@ -1675,7 +1828,7 @@ def process_price_milestone(config_key, output_line, script_config=None):
             else f"Move from entry: {milestone['Move']} points ({milestone['Direction']})\n"
         )
     )
-    recipients = script_config.get("email_recipients") if script_config else None
+    recipients = _signal_email_recipients()
     send_email_notification(subject, body, recipients=recipients)
 
 
@@ -1742,13 +1895,13 @@ def process_trade_result(config_key, output_line, script_config=None):
         for label, value in details
     )
     html_body = f"<html><body><h2>GOLDMINI sell confirmed</h2><table>{rows}</table></body></html>"
-    recipients = script_config.get("email_recipients") if script_config else None
+    recipients = _signal_email_recipients()
     send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 
-def process_buy_scan_results(config_key, output_line, script_config=None):
-    """Email one combined daily BUY list emitted by a stock scanner."""
-    prefix = "[BUY SCAN RESULTS] "
+def process_scan_results(config_key, output_line, script_config=None):
+    """Email one detailed BUY/SELL report from one stock scanner run."""
+    prefix = "[SCAN RESULTS] "
     if not output_line.startswith(prefix):
         return
 
@@ -1758,7 +1911,7 @@ def process_buy_scan_results(config_key, output_line, script_config=None):
         if separator:
             fields[name] = value
     if fields.get("Script", "").upper() != str(config_key).upper():
-        logger.error(f"[EMAIL] Ignoring malformed BUY scan results for {config_key}")
+        logger.error(f"[EMAIL] Ignoring malformed scan results for {config_key}")
         return
 
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
@@ -1766,27 +1919,78 @@ def process_buy_scan_results(config_key, output_line, script_config=None):
     if not send_on_signals or not script_emails_enabled:
         return
 
-    stocks = [
-        stock for stock in fields.get("Stocks", "").split(",")
-        if stock and stock != "NONE"
-    ]
-    trading_date = fields.get("Date", "UNKNOWN")
-    subject = f"[BUY SIGNALS] {config_key} {trading_date}"
-    if stocks:
-        stock_list = "\n".join(f"- {stock}" for stock in stocks)
-        html_stocks = "".join(f"<li>{html.escape(stock)}</li>" for stock in stocks)
+    try:
+        results = json.loads(fields["Results"])
+    except (KeyError, json.JSONDecodeError) as exc:
+        logger.error(f"[EMAIL] Invalid scan results from {config_key}: {exc}")
+        return
+    if not isinstance(results, list):
+        logger.error(f"[EMAIL] Scan results from {config_key} must be a list")
+        return
+
+    required_fields = {"symbol", "side", "date", "price", "supertrend"}
+    signals = []
+    for result in results:
+        if (
+            not isinstance(result, dict)
+            or not required_fields.issubset(result)
+            or str(result["side"]).upper() not in {"BUY", "SELL"}
+        ):
+            logger.error(f"[EMAIL] Invalid scan result from {config_key}: {result!r}")
+            return
+        signals.append(
+            {
+                "symbol": str(result["symbol"]),
+                "side": str(result["side"]).upper(),
+                "date": str(result["date"]),
+                "price": result["price"],
+                "supertrend": result["supertrend"],
+            }
+        )
+
+    scan_date = fields.get("ScanDate", "UNKNOWN")
+    period = fields.get("Period", "daily").capitalize()
+    subject = f"[{period.upper()} SCAN REPORT] {config_key} {scan_date}"
+    if signals:
+        text_rows = [
+            f"{signal['symbol']:<16} {signal['side']:<6} {signal['date']:<12} "
+            f"{float(signal['price']):>12.2f} {float(signal['supertrend']):>12.2f}"
+            for signal in signals
+        ]
+        stock_list = (
+            f"{'Symbol':<16} {'Signal':<6} {'Date':<12} {'Price':>12} {'Supertrend':>12}\n"
+            + "\n".join(text_rows)
+        )
+        html_rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(signal['symbol'])}</td>"
+            f"<td>{html.escape(signal['side'])}</td>"
+            f"<td>{html.escape(signal['date'])}</td>"
+            f"<td align='right'>{float(signal['price']):.2f}</td>"
+            f"<td align='right'>{float(signal['supertrend']):.2f}</td>"
+            "</tr>"
+            for signal in signals
+        )
+        html_table = (
+            "<table border='1' cellpadding='5' cellspacing='0'>"
+            "<thead><tr><th>Symbol</th><th>Signal</th><th>Date</th>"
+            "<th>Price</th><th>Supertrend</th></tr></thead>"
+            f"<tbody>{html_rows}</tbody></table>"
+        )
     else:
-        stock_list = "No stocks generated a BUY signal."
-        html_stocks = "<li>No stocks generated a BUY signal.</li>"
+        stock_list = f"No stocks generated a BUY or SELL signal in the {period.lower()} scan."
+        html_table = f"<p>{html.escape(stock_list)}</p>"
     body = (
-        f"Daily-candle Supertrend BUY signals for {trading_date}\n\n"
-        f"Stocks ({len(stocks)}):\n{stock_list}"
+        f"{period} Supertrend BUY/SELL scan report for {scan_date}\n\n"
+        f"Signals ({len(signals)}):\n{stock_list}\n\n"
+        "This is a scanner report; no orders were placed."
     )
     html_body = (
         f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<p>Stocks ({len(stocks)}):</p><ul>{html_stocks}</ul></body></html>"
+        f"<p>Signals ({len(signals)}):</p>{html_table}"
+        "<p>This is a scanner report; no orders were placed.</p></body></html>"
     )
-    recipients = script_config.get("email_recipients") if script_config else None
+    recipients = _scan_report_recipients()
     send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 
@@ -1805,10 +2009,12 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
                     record_price_milestone(run_context, output)
+                    process_generated_signal(config_key, output, script_config)
+                    process_order_confirmation(config_key, output, script_config)
                     process_trade_signal(config_key, output, script_config)
                     process_trade_result(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
-                    process_buy_scan_results(config_key, output, script_config)
+                    process_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
         email_script_failure(

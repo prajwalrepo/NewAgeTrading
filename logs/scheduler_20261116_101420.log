@@ -1,0 +1,4 @@
+2026-11-16 10:14:20,874 - INFO - [SCHEDULER] - [CONFIG] SENSEXSupperBuy.enabled overridden from False to True by scheduler_config.json
+2026-11-16 10:14:20,874 - INFO - [SCHEDULER] - [CONFIG] 320trade.enabled overridden from True to False by scheduler_config.json
+2026-11-16 10:14:20,874 - INFO - [SCHEDULER] - [CONFIG] Loaded scheduler settings from scheduler_config.json
+2026-11-16 10:14:21,917 - ERROR - [SCHEDULER] - [EMAIL] Failed to send '[EMAIL TEST] NewAgeTrading': Connection unexpectedly closed

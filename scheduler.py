@@ -216,7 +216,6 @@ CONFIG = {
         "smtp_port": 465,
         "use_ssl": True,
         "smtp_username": "",
-        "smtp_password": "",
         "from_email": "",
         "to_emails": [],
         "signal_recipients": [],
@@ -264,8 +263,29 @@ def _normalize_run_day(day_value):
     return None
 
 
+def _load_project_env():
+    """Load project environment variables from .env without overriding the process environment."""
+    env_file = Path(__file__).resolve().with_name(".env")
+    if not env_file.exists():
+        return
+
+    try:
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.error(f"[CONFIG] Failed to read {env_file.name}: {exc}")
+        raise
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def load_scheduler_config():
     """Load optional scheduler overrides from scheduler_config.json."""
+    _load_project_env()
     if not CONFIG_FILE.exists():
         logger.info(f"[CONFIG] Using in-file schedule defaults (missing {CONFIG_FILE.name})")
         return
@@ -402,7 +422,7 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     recipients = [recipients] if isinstance(recipients, str) else list(recipients or [])
     smtp_host = str(email_cfg.get("smtp_host", "") or "").strip()
     smtp_username = str(email_cfg.get("smtp_username", "") or "").strip()
-    smtp_password = str(email_cfg.get("smtp_password", "") or "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
     from_email = str(email_cfg.get("from_email", smtp_username) or smtp_username).strip()
     smtp_port = int(email_cfg.get("smtp_port", 465) or 465)
 

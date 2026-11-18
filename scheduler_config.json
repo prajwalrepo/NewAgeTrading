@@ -18,7 +18,6 @@
     "smtp_port": 465,
     "use_ssl": true,
     "smtp_username": "gencinvestor@gmail.com",
-    "smtp_password": "powg jovk hxry eoaq",
     "from_email": "gencinvestor@gmail.com",
     "to_emails": ["gencinvestor@gmail.com"],
     "signal_recipients": ["basappafamily6@gmail.com"],

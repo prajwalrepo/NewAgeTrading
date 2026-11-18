@@ -112,8 +112,8 @@ CONFIG = {
     "trailing_stop_loss_points": 10,
     "trailing_stop_trigger_points": 20,
     "max_profit_booking_enabled": True,
-    "max_profit_booking_points": 50.0,
-    "max_profit_check_interval_sec": 200,
+    "max_profit_booking_points": 30.0,
+    "max_profit_check_interval_sec": 0,
     "price_milestone_emails_enabled": True,
     "price_milestone_points": 10.0,
     "price_milestone_poll_interval_sec": 60,
@@ -900,6 +900,11 @@ def select_atm_contract(side, index_price):
     return min(contracts, key=lambda c: (abs(c["strike"] - index_price), -c["strike"]))
 
 
+def get_open_position(candle_symbol):
+    position = positions.get(candle_symbol)
+    return position if position and position.get("status") == "OPEN" else None
+
+
 def get_contract_for_symbol(candle_symbol, fallback_side=None, fallback_order_symbol=None, fallback_strike=None):
     side = fallback_side or candle_to_side.get(candle_symbol)
     if side in contract_universe:
@@ -1370,10 +1375,16 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 
         signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
         strike = positions[candle_symbol].get("strike", "NA")
+        highest_price = max(
+            float(positions[candle_symbol].get("highest_price", price) or price),
+            float(price),
+        )
+        positions[candle_symbol]["highest_price"] = highest_price
         print(
             f"[TRADE SIGNAL] Script=OILMINI Side=SELL Time={signal_time} Symbol={candle_symbol} "
             f"Strike={strike} Price={float(price):.2f} Reason={reason} "
-            f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', False) else 'NO'}",
+            f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', False) else 'NO'} "
+            f"HighestPrice={highest_price:.2f}",
             flush=True,
         )
         live_qty = int(positions[candle_symbol].get("qty", 0))
@@ -1450,14 +1461,26 @@ def wait_until_next_interval():
         sleep_sec = min(poll_interval, wait_sec)
         time.sleep(sleep_sec)
         wait_sec -= sleep_sec
-        if CONFIG.get("price_milestone_emails_enabled", True):
+        if (
+            CONFIG.get("price_milestone_emails_enabled", True)
+            or CONFIG.get("max_profit_booking_enabled", True)
+        ):
             clear_loop_market_cache()
             check_price_milestones()
 
 
 def check_price_milestones():
     point_step = float(CONFIG.get("price_milestone_points", 10.0) or 0)
-    if point_step <= 0:
+    milestones_enabled = (
+        bool(CONFIG.get("price_milestone_emails_enabled", True))
+        and point_step > 0
+    )
+    max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
+    max_profit_enabled = (
+        bool(CONFIG.get("max_profit_booking_enabled", True))
+        and max_profit_points > 0
+    )
+    if not milestones_enabled and not max_profit_enabled:
         return
 
     monitored_positions = dict(debug_signal_positions)
@@ -1476,53 +1499,71 @@ def check_price_milestones():
         if current_price is None:
             continue
 
-        movement = float(current_price) - entry_price
-        current_level = int(movement / point_step)
-        highest_level = int(position.get("price_milestone_highest_level", 0))
-        lowest_level = int(position.get("price_milestone_lowest_level", 0))
-        if current_level > highest_level:
-            levels = range(highest_level + 1, current_level + 1)
-            position["price_milestone_highest_level"] = current_level
-        elif current_level < lowest_level:
-            levels = range(lowest_level - 1, current_level - 1, -1)
-            position["price_milestone_lowest_level"] = current_level
-        else:
-            levels = ()
+        highest_price = float(position.get("highest_price", entry_price) or entry_price)
+        if float(current_price) > highest_price:
+            position["highest_price"] = float(current_price)
 
-        for level in levels:
-            milestone_move = level * point_step
-            direction = "UP" if milestone_move > 0 else "DOWN"
-            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            print(
-                f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
-                f"Symbol={symbol} Side={position.get('side', 'NA')} "
-                f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
-                f"Move={milestone_move:+.2f} Direction={direction}",
-                flush=True,
-            )
+        if milestones_enabled:
+            movement = float(current_price) - entry_price
+            current_level = int(movement / point_step)
+            highest_level = int(position.get("price_milestone_highest_level", 0))
+            lowest_level = int(position.get("price_milestone_lowest_level", 0))
+            if current_level > highest_level:
+                levels = range(highest_level + 1, current_level + 1)
+                position["price_milestone_highest_level"] = current_level
+            elif current_level < lowest_level:
+                levels = range(lowest_level - 1, current_level - 1, -1)
+                position["price_milestone_lowest_level"] = current_level
+            else:
+                levels = ()
 
-        peak_price = float(
-            position.get("price_milestone_peak_price", position.get("highest_price", entry_price))
-            or entry_price
-        )
-        if float(current_price) > peak_price:
-            peak_price = float(current_price)
-            position["price_milestone_peak_price"] = peak_price
-            position["price_milestone_drawdown_level"] = 0
-        drawdown_level = int((peak_price - float(current_price) + 1e-9) / point_step)
-        previous_drawdown_level = int(position.get("price_milestone_drawdown_level", 0))
-        for level in range(previous_drawdown_level + 1, drawdown_level + 1):
-            signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
-            print(
-                f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
-                f"Symbol={symbol} Side={position.get('side', 'NA')} "
-                f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
-                f"Peak={peak_price:.2f} Move={-level * point_step:+.2f} "
-                f"Direction=DOWN",
-                flush=True,
+            for level in levels:
+                milestone_move = level * point_step
+                direction = "UP" if milestone_move > 0 else "DOWN"
+                signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+                print(
+                    f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
+                    f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                    f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
+                    f"Move={milestone_move:+.2f} Direction={direction}",
+                    flush=True,
+                )
+
+            peak_price = float(
+                position.get("price_milestone_peak_price", position.get("highest_price", entry_price))
+                or entry_price
             )
-        if drawdown_level > previous_drawdown_level:
-            position["price_milestone_drawdown_level"] = drawdown_level
+            if float(current_price) > peak_price:
+                peak_price = float(current_price)
+                position["price_milestone_peak_price"] = peak_price
+                position["price_milestone_drawdown_level"] = 0
+            drawdown_level = int((peak_price - float(current_price) + 1e-9) / point_step)
+            previous_drawdown_level = int(position.get("price_milestone_drawdown_level", 0))
+            for level in range(previous_drawdown_level + 1, drawdown_level + 1):
+                signal_time = get_trading_now().strftime("%Y-%m-%dT%H:%M:%S")
+                print(
+                    f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
+                    f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                    f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
+                    f"Peak={peak_price:.2f} Move={-level * point_step:+.2f} "
+                    f"Direction=DOWN",
+                    flush=True,
+                )
+            if drawdown_level > previous_drawdown_level:
+                position["price_milestone_drawdown_level"] = drawdown_level
+
+        if (
+            position.get("status") == "OPEN"
+            and max_profit_enabled
+            and float(current_price) >= entry_price + max_profit_points
+        ):
+            place_sell_order(
+                symbol,
+                position.get("order_symbol"),
+                float(current_price),
+                reason=f"MAX_PROFIT: +{max_profit_points:g} pts",
+                qty=position.get("qty"),
+            )
 
 
 def live_signal_loop():
@@ -1596,7 +1637,7 @@ def live_signal_loop():
                 snapshot = print_flat_market_snapshot(signal_symbol, side, idx_time, contract.get("strike"))
                 ok = bool(snapshot.get("ok"))
 
-                open_position = positions.get(signal_symbol)
+                open_position = get_open_position(signal_symbol)
                 debug_position = debug_signal_positions.get(signal_symbol)
                 tracked_position = open_position or debug_position
 
@@ -1668,6 +1709,8 @@ def live_signal_loop():
 
                 position = positions[symbol]
                 entry_price = float(position.get("entry_price", 0) or 0)
+                if float(cur) > float(position.get("highest_price", entry_price) or entry_price):
+                    position["highest_price"] = float(cur)
                 max_profit_points = float(CONFIG.get("max_profit_booking_points", 0) or 0)
                 now_ts = datetime.now()
                 last_max_check = last_max_profit_check_at.get(symbol)

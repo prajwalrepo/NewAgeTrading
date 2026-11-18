@@ -770,6 +770,7 @@ def seconds_until_next_script_start(now=None):
 TRADE_SIGNAL_FIELDS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason",
     "Lots", "LotSize", "Qty", "BuyAt", "SellAt", "PnL", "OrderPlaced",
+    "HighestPrice",
 )
 TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
@@ -803,10 +804,12 @@ PRICE_MILESTONE_FIELD_PATTERN = re.compile(
 )
 TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
-    "Lot Size", "Qty", "Order Placed",
+    "Lot Size", "Qty", "Order Placed", "Highest Price Observed",
 )
-SUMMARY_EMAIL_COLUMNS = tuple(
-    column for column in TRADE_REPORT_COLUMNS if column != "Symbol"
+LEGACY_TRADE_REPORT_COLUMNS = TRADE_REPORT_COLUMNS[:-1]
+SUMMARY_EMAIL_COLUMNS = (
+    "Script", "Side (CE/PE)", "Action", "Time", "Strike", "Price", "Reason",
+    "Lots", "Lot Size", "Qty", "Order Placed", "Highest Price Observed",
 )
 MONTHLY_REPORT_SHEETS = {
     "NIFTYINTRA": "NIFTY",
@@ -827,7 +830,7 @@ def _initialize_trade_report_sheet(workbook, sheet=None, title="Trades"):
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"
-    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16), start=1):
+    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16, 20), start=1):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
     sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
     return sheet
@@ -836,8 +839,8 @@ def _initialize_trade_report_sheet(workbook, sheet=None, title="Trades"):
 def _trade_report_values(trade):
     row = []
     for column in TRADE_REPORT_COLUMNS:
-        value = trade[column]
-        if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
+        value = trade.get(column, "") if column == "Highest Price Observed" else trade[column]
+        if column in {"Strike", "Price", "Lots", "Lot Size", "Qty", "Highest Price Observed"} and value:
             try:
                 number = float(value)
                 value = int(number) if number.is_integer() else number
@@ -869,6 +872,32 @@ def _save_trade_report(workbook, report_path):
                 pass
 
 
+def _prepare_trade_report_sheet(workbook, sheet, report_path):
+    headers = tuple(next(sheet.iter_rows(min_row=1, max_row=1, values_only=True)))
+    if not any(headers):
+        return _initialize_trade_report_sheet(workbook, sheet, title=sheet.title)
+
+    if headers[:len(LEGACY_TRADE_REPORT_COLUMNS)] == LEGACY_TRADE_REPORT_COLUMNS:
+        high_column = len(LEGACY_TRADE_REPORT_COLUMNS) + 1
+        sheet.insert_cols(high_column)
+        high_cell = sheet.cell(row=1, column=high_column, value="Highest Price Observed")
+        high_cell.font = Font(bold=True)
+        sheet.column_dimensions[high_cell.column_letter].width = 20
+        event_key_column = high_column + 1
+    elif headers[:len(TRADE_REPORT_COLUMNS)] == TRADE_REPORT_COLUMNS:
+        event_key_column = len(TRADE_REPORT_COLUMNS) + 1
+    else:
+        raise ValueError(f"Unexpected trade report columns in {report_path}")
+
+    event_key_cell = sheet.cell(row=1, column=event_key_column)
+    if event_key_cell.value not in (None, "Event Key"):
+        raise ValueError(f"Unexpected trade report event key column in {report_path}")
+    event_key_cell.value = "Event Key"
+    event_key_cell.font = Font(bold=True)
+    sheet.column_dimensions[event_key_cell.column_letter].hidden = True
+    return sheet
+
+
 def parse_trade_signal(line):
     """Parse one structured trade event from script output."""
     if "[TRADE SIGNAL]" not in line:
@@ -887,7 +916,7 @@ def parse_trade_signal(line):
     if fields["Side"].upper() not in {"BUY", "SELL"} or fields["OrderPlaced"].upper() not in {"YES", "NO"}:
         return None
 
-    return {
+    trade = {
         "Script": fields["Script"],
         "Side": fields["Side"].upper(),
         "Time": fields["Time"],
@@ -903,6 +932,9 @@ def parse_trade_signal(line):
         "PnL": fields.get("PnL", ""),
         "Order Placed": fields["OrderPlaced"].upper(),
     }
+    if fields.get("HighestPrice"):
+        trade["Highest Price Observed"] = fields["HighestPrice"]
+    return trade
 
 
 def parse_generated_signal(line):
@@ -1058,17 +1090,7 @@ def append_trade_to_report(config_key, trade):
         workbook = load_workbook(report_path) if report_path.exists() else Workbook()
         try:
             if "Trades" in workbook.sheetnames:
-                sheet = workbook["Trades"]
-                headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
-                if not any(headers):
-                    _initialize_trade_report_sheet(workbook, sheet)
-                elif headers[:len(TRADE_REPORT_COLUMNS)] != TRADE_REPORT_COLUMNS:
-                    raise ValueError(f"Unexpected trade report columns in {report_path}")
-                elif len(headers) < len(TRADE_REPORT_COLUMNS) + 1:
-                    sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1, value="Event Key")
-                    sheet.column_dimensions[
-                        sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter
-                    ].hidden = True
+                sheet = _prepare_trade_report_sheet(workbook, workbook["Trades"], report_path)
             else:
                 sheet = _initialize_trade_report_sheet(workbook, workbook.create_sheet("Trades"))
 
@@ -1122,16 +1144,7 @@ def append_trade_to_monthly_report(config_key, trade):
                     workbook, workbook.create_sheet(), title=sheet_name
                 )
             else:
-                sheet = workbook[sheet_name]
-                headers = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
-                if not any(headers):
-                    _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
-                elif headers[:len(TRADE_REPORT_COLUMNS)] != TRADE_REPORT_COLUMNS:
-                    raise ValueError(f"Unexpected trade report columns in {report_path}")
-                elif len(headers) < len(TRADE_REPORT_COLUMNS) + 1:
-                    key_cell = sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1, value="Event Key")
-                    key_cell.font = Font(bold=True)
-                    sheet.column_dimensions[key_cell.column_letter].hidden = True
+                sheet = _prepare_trade_report_sheet(workbook, workbook[sheet_name], report_path)
 
             key_column = len(TRADE_REPORT_COLUMNS) + 1
             if any(
@@ -1193,9 +1206,22 @@ def _trade_report_rows(report_path, sheet_name="Trades"):
             return []
         sheet = workbook[sheet_name]
         headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        required_columns = set(TRADE_REPORT_COLUMNS) - {"Highest Price Observed"}
+        missing_columns = required_columns.difference(headers)
+        if missing_columns:
+            raise ValueError(
+                f"Missing trade report columns in {report_path}: {', '.join(sorted(missing_columns))}"
+            )
+        indices = {
+            name: headers.index(name)
+            for name in TRADE_REPORT_COLUMNS
+            if name in headers
+        }
         return [
-            {name: row[indices[name]] for name in TRADE_REPORT_COLUMNS}
+            {
+                name: row[indices[name]] if name in indices else ""
+                for name in TRADE_REPORT_COLUMNS
+            }
             for row in sheet.iter_rows(min_row=2, values_only=True)
             if any(value is not None for value in row[:len(TRADE_REPORT_COLUMNS)])
         ]
@@ -1210,7 +1236,7 @@ def _trade_rows_html(rows):
     table_rows = "".join(
         "<tr>"
         + "".join(
-            f"<td>{html.escape(str(row.get(column) if row.get(column) is not None else ''))}</td>"
+            f"<td>{html.escape(str(_summary_trade_value(row, column) or ''))}</td>"
             for column in SUMMARY_EMAIL_COLUMNS
         )
         + "</tr>"
@@ -1233,7 +1259,7 @@ def _trade_rows_text(rows):
             " | ".join(SUMMARY_EMAIL_COLUMNS),
             *(
                 " | ".join(
-                    str(row.get(column) if row.get(column) is not None else "")
+                    str(_summary_trade_value(row, column) or "")
                     for column in SUMMARY_EMAIL_COLUMNS
                 )
                 for row in rows
@@ -1242,12 +1268,25 @@ def _trade_rows_text(rows):
     )
 
 
+def _summary_trade_value(row, column):
+    if column == "Action":
+        return row.get("Side")
+    if column == "Side (CE/PE)":
+        match = re.search(r"(CE|PE)$", str(row.get("Symbol") or "").upper())
+        return match.group(1) if match else ""
+    return row.get(column)
+
+
 def _completed_trade_outcomes(report_path):
     workbook = load_workbook(report_path, read_only=True, data_only=True)
     try:
         sheet = workbook["Trades"]
         headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        indices = {
+            name: headers.index(name)
+            for name in TRADE_REPORT_COLUMNS
+            if name in headers
+        }
         open_buys = {}
         outcomes = []
         for values in sheet.iter_rows(min_row=2, values_only=True):
@@ -1282,7 +1321,11 @@ def _320trade_outcome_rows(report_path):
     try:
         sheet = workbook["Trades"]
         headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        indices = {name: headers.index(name) for name in TRADE_REPORT_COLUMNS}
+        indices = {
+            name: headers.index(name)
+            for name in TRADE_REPORT_COLUMNS
+            if name in headers
+        }
         open_buys = {}
         outcomes = []
         for values in sheet.iter_rows(min_row=2, values_only=True):

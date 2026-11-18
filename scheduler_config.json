@@ -135,7 +135,7 @@
       "run_time_end": "23:35",
       "api_delay_seconds": 0,
       "send_signal_emails": true,
-      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Uses 2-minute candles, books maximum profit at 50 points, and sends milestone emails at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST throughout the month; scheduler allows until 23:35 for square-off/report completion. Uses 2-minute candles, books maximum profit at 30 points, and sends milestone emails at each 10-point move from entry or down from the running peak. Starts first to reduce Groww API contention. Paper-only."
     },
 
     "GOLDMINI": {

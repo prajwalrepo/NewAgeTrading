@@ -56,7 +56,7 @@ CONFIG = {
     "order_expiry": ["26O19", "26OCT", "26N03","26N09", "26N17", "26NOV"],
     "strike_step": 50,
     "strike_start": 20000,
-    "strike_end": 25000,
+    "strike_end": 30000,
 
     # Entry rules
     "use_momentum_filter": True,

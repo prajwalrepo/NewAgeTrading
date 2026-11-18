@@ -56,7 +56,7 @@ CONFIG = {
     # Keep the configured universe wide enough for normal SENSEX movement.
     # ATM selection then chooses the nearest 100-point strike to the index.
     "strike_start": 60000,
-    "strike_end": 80000,
+    "strike_end": 100000,
 
     # Entry rules
     "use_momentum_filter": True,

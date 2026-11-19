@@ -2137,11 +2137,12 @@ def process_scan_results(config_key, output_line, script_config=None):
     period_title = period.capitalize()
     scan_date = generated_date.isoformat()
     subject = f"[{period.upper()} SCAN REPORT] {config_key} {scan_date}"
-    if signals:
+    buy_signals = [signal for signal in signals if signal["side"] == "BUY"]
+    if buy_signals:
         text_rows = [
             f"{signal['symbol']:<16} {signal['side']:<6} {signal['date']:<12} "
             f"{float(signal['price']):>12.2f} {float(signal['supertrend']):>12.2f}"
-            for signal in signals
+            for signal in buy_signals
         ]
         stock_list = (
             f"{'Symbol':<16} {'Signal':<6} {'Date':<12} {'Price':>12} {'Supertrend':>12}\n"
@@ -2155,7 +2156,7 @@ def process_scan_results(config_key, output_line, script_config=None):
             f"<td align='right'>{float(signal['price']):.2f}</td>"
             f"<td align='right'>{float(signal['supertrend']):.2f}</td>"
             "</tr>"
-            for signal in signals
+            for signal in buy_signals
         )
         html_table = (
             "<table border='1' cellpadding='5' cellspacing='0'>"
@@ -2164,16 +2165,16 @@ def process_scan_results(config_key, output_line, script_config=None):
             f"<tbody>{html_rows}</tbody></table>"
         )
     else:
-        stock_list = f"No stocks generated a BUY or SELL signal in the {period.lower()} scan."
+        stock_list = f"No stocks generated a BUY signal in the {period.lower()} scan."
         html_table = f"<p>{html.escape(stock_list)}</p>"
     body = (
-        f"{period_title} Supertrend BUY/SELL scan report for {scan_date}\n\n"
-        f"Signals ({len(signals)}):\n{stock_list}\n\n"
+        f"{period_title} Supertrend BUY scan report for {scan_date}\n\n"
+        f"BUY signals ({len(buy_signals)}):\n{stock_list}\n\n"
         "This is a scanner report; no orders were placed."
     )
     html_body = (
         f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<p>Signals ({len(signals)}):</p>{html_table}"
+        f"<p>BUY signals ({len(buy_signals)}):</p>{html_table}"
         "<p>This is a scanner report; no orders were placed.</p></body></html>"
     )
     recipients = _scan_report_recipients()

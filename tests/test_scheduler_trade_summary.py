@@ -239,13 +239,22 @@ class SchedulerTradeSummaryTests(unittest.TestCase):
 
     def test_daily_and_weekly_scan_emails_attach_formatted_excel_reports(self):
         scan_date = "2026-11-19"
-        result = {
-            "symbol": "ABC",
-            "side": "BUY",
-            "date": "2026-11-18",
-            "price": 100.5,
-            "supertrend": 98.0,
-        }
+        results = [
+            {
+                "symbol": "ABC",
+                "side": "BUY",
+                "date": "2026-11-18",
+                "price": 100.5,
+                "supertrend": 98.0,
+            },
+            {
+                "symbol": "XYZ",
+                "side": "SELL",
+                "date": "2026-11-18",
+                "price": 90.0,
+                "supertrend": 95.0,
+            },
+        ]
 
         with TemporaryDirectory() as temp_dir:
             with (
@@ -263,7 +272,7 @@ class SchedulerTradeSummaryTests(unittest.TestCase):
                     output = (
                         f"[SCAN RESULTS] Script={script_name} Period={period} "
                         f"ScanDate={scan_date} Results="
-                        f"{json.dumps([result], separators=(',', ':'))}"
+                        f"{json.dumps(results, separators=(',', ':'))}"
                     )
                     scheduler.process_scan_results(
                         script_name, output, script_config={"send_signal_emails": True}
@@ -271,6 +280,12 @@ class SchedulerTradeSummaryTests(unittest.TestCase):
 
             self.assertEqual(send_email.call_count, 2)
             for call, period in zip(send_email.call_args_list, ("daily", "weekly")):
+                body = call.args[1]
+                self.assertIn("BUY signals (1)", body)
+                self.assertIn("ABC", body)
+                self.assertNotIn("XYZ", body)
+                self.assertIn("ABC", call.kwargs["html_body"])
+                self.assertNotIn("XYZ", call.kwargs["html_body"])
                 attachment_path = call.kwargs["attachment_path"]
                 self.assertTrue(attachment_path.exists())
                 self.assertEqual(attachment_path.name, f"{period}_scan_20261119.xlsx")
@@ -286,6 +301,10 @@ class SchedulerTradeSummaryTests(unittest.TestCase):
                     self.assertEqual(
                         tuple(cell.value for cell in sheet[2][:4]),
                         ("ABC", 100.5, 98.0, "BUY"),
+                    )
+                    self.assertEqual(
+                        tuple(cell.value for cell in sheet[3][:4]),
+                        ("XYZ", 90.0, 95.0, "SELL"),
                     )
                     self.assertEqual(
                         sheet.cell(row=2, column=5).value.strftime("%Y-%m-%d"),

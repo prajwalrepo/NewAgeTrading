@@ -512,6 +512,11 @@ def _emit_trade_signal(
     buy_price=None, sell_price=None, pnl=None, signal_time=None,
 ):
     signal_time = signal_time or _now_ist(config).strftime("%Y-%m-%dT%H:%M:%S")
+    highest_price = (
+        contract.get("milestone_peak_price", contract.get("highest_price"))
+        if side.upper() == "SELL"
+        else None
+    )
     _log(
         config,
         f"[TRADE SIGNAL] Script={config['script_name']} Side={side} Time={signal_time} "
@@ -519,6 +524,7 @@ def _emit_trade_signal(
         f"{f'BuyAt={float(buy_price):.2f} ' if buy_price is not None else ''}"
         f"{f'SellAt={float(sell_price):.2f} ' if sell_price is not None else ''}"
         f"{f'PnL={float(pnl):.2f} ' if pnl is not None else ''}"
+        f"{f'HighestPrice={float(highest_price):.2f} ' if highest_price is not None else ''}"
         f"Qty={int(quantity)} Reason={reason} OrderPlaced={'YES' if placed else 'NO'}",
     )
 
@@ -533,6 +539,8 @@ def _emit_milestone(
         f"[PRICE MILESTONE] Script={config['script_name']} Basis=OPTION "
         f"Time={_now_ist(config).strftime('%Y-%m-%dT%H:%M:%S')} "
         f"Symbol={position['candle_symbol']} Side={position['side']} "
+        f"Strike={position.get('strike', 'NA')} Qty={position.get('qty', 'NA')} "
+        f"OrderPlaced={'NO' if position.get('paper_only', False) else 'YES'} "
         f"Entry={float(position['entry_price']):.2f} "
         f"Price={float(option_price):.2f} {peak_field}"
         f"Move={move:+d} Direction={direction}",

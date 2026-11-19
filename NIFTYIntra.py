@@ -1702,6 +1702,7 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
             f"Symbol={candle_symbol} Strike={strike} Price={exec_price:.2f} "
             f"Qty={qty_units} BuyAt={float(pos.get('entry_price', exec_price)):.2f} "
             f"SellAt={exec_price:.2f} PnL={pnl:.2f} "
+            f"HighestPrice={float(pos.get('highest_price', exec_price)):.2f} "
             f"Reason={log_reason} OrderPlaced={'YES' if actual_trade_enabled else 'NO'}",
             flush=True,
         )

@@ -1415,8 +1415,17 @@ def place_sell_order(candle_symbol, order_symbol, price, reason="Manual", qty=No
 
         entry_price = float(positions[candle_symbol].get("entry_price", exec_price))
         pnl = (exec_price - entry_price) * qty_units
+        highest_price = max(highest_price, float(exec_price))
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [EXIT CONFIRMED] {candle_symbol} x{qty_units} | Reason={reason} | PnL {pnl:.0f}")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [TRADE RESULT] Script=OILMINI Side=SELL Symbol={candle_symbol} Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} PnL={pnl:.0f}")
+        print(
+            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [TRADE RESULT] "
+            f"Script=OILMINI Side=SELL Time={signal_time} Symbol={candle_symbol} "
+            f"Strike={strike} BuyAt={entry_price:.2f} SellAt={exec_price:.2f} "
+            f"Qty={qty_units} PnL={pnl:.0f} "
+            f"OrderPlaced={'YES' if actual_trade_enabled else 'NO'} "
+            f"HighestPrice={highest_price:.2f}",
+            flush=True,
+        )
         positions[candle_symbol]["status"] = "CLOSED"
         positions[candle_symbol]["exit_price"] = exec_price
         positions[candle_symbol]["qty"] = 0
@@ -1524,6 +1533,8 @@ def check_price_milestones():
                 print(
                     f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
                     f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                    f"Strike={position.get('strike', 'NA')} Qty={position.get('qty', 'NA')} "
+                    f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', False) else 'NO'} "
                     f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
                     f"Move={milestone_move:+.2f} Direction={direction}",
                     flush=True,
@@ -1544,6 +1555,8 @@ def check_price_milestones():
                 print(
                     f"[PRICE MILESTONE] Script=OILMINI Time={signal_time} "
                     f"Symbol={symbol} Side={position.get('side', 'NA')} "
+                    f"Strike={position.get('strike', 'NA')} Qty={position.get('qty', 'NA')} "
+                    f"OrderPlaced={'YES' if CONFIG.get('enable_actual_trade', False) else 'NO'} "
                     f"Entry={entry_price:.2f} Price={float(current_price):.2f} "
                     f"Peak={peak_price:.2f} Move={-level * point_step:+.2f} "
                     f"Direction=DOWN",

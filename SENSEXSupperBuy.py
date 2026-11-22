@@ -36,7 +36,7 @@ CONFIG = {
     "allocation_per_trade": 35000,
     "milestone_points": 20,
     "milestone_points_by_side": {"CE": 20, "PE": 20},
-    "enable_actual_trade": False,
+    "enable_actual_trade": True,
     "api_rate_limit_retry_delay": 5,
     "api_rate_limit_max_retries": 3,
 }

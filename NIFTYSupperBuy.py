@@ -26,7 +26,7 @@ CONFIG = {
     "strike_step": 50,
     # Position sizing is bounded by both the allocation and this lot cap.
     "lot_size": 65,
-    "max_lots_per_trade": 1,
+    "max_lots_per_trade": 2,
     "expiry_fs": ["19Oct26", "27Oct26", "03Nov26", "09Nov26", "17Nov26", "23Nov26"],
     "order_expiry": ["26O19", "26OCT", "26N03", "26N09", "26N17", "26NOV"],
     "entry_window_start": "09:15",
@@ -36,7 +36,7 @@ CONFIG = {
     "allocation_per_trade": 35000,
     "milestone_points": 15,
     "milestone_points_by_side": {"CE": 15, "PE": 15},
-    "enable_actual_trade": False,
+    "enable_actual_trade": True,
     "api_rate_limit_retry_delay": 5,
     "api_rate_limit_max_retries": 3,
 }

@@ -73,7 +73,7 @@
         "CE": 15,
         "PE": 15
       },
-      "enable_actual_trade": false,
+      "enable_actual_trade": true,
       "atr_period": 10,
       "factor": 3.0,
       "strike_step": 50,
@@ -101,7 +101,7 @@
         "CE": 20,
         "PE": 20
       },
-      "enable_actual_trade": false,
+      "enable_actual_trade": true,
       "atr_period": 10,
       "factor": 3.0,
       "strike_step": 100,

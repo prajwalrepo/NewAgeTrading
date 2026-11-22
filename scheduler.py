@@ -21,8 +21,6 @@ import smtplib
 import mimetypes
 import re
 import hashlib
-import html
-import tempfile
 from collections import deque
 from datetime import datetime, timedelta, time as dt_time, timezone
 from email.message import EmailMessage
@@ -38,8 +36,6 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 RUN_LOG_DIR = LOG_DIR / "script_runs"
 RUN_LOG_DIR.mkdir(exist_ok=True)
-MONTHLY_REPORT_DIR = LOG_DIR / "monthly_trade_reports"
-WEEKLY_REPORT_DIR = LOG_DIR / "weekly_trade_reports"
 CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -52,7 +48,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("SCHEDULER")
-FAILURE_ALERTS_SENT = set()
 
 
 class DayOfWeek(Enum):
@@ -72,104 +67,63 @@ class DayOfWeek(Enum):
 SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
-        "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 15:15 IST square-off",
+        "description": "NIFTY Intraday FNO Strategy",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "09:30",  # IST
-        "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
-        "api_delay_seconds": 00,  # Delay before starting this script (to space out API calls)
-        "send_signal_emails": True,  # Email every generated buy/sell signal
+        "run_time_start": "09:13",  # IST
+        "run_time_end": "15:30",
+        "api_delay_seconds": 10,  # Delay before starting this script (to space out API calls)
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
     
     "SENSEXINTRA": {
         "script_name": "SENSEXINTRA.py",
-        "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 15:15 IST square-off",
+        "description": "SENSEX Intraday FNO Strategy",
         "enabled": True,
         "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
         "run_days_of_month": None,  # Every day of month
-        "run_time_start": "09:30",
-        "run_time_end": "15:16",  # Give 15:15 square-off a minute to complete
-        "api_delay_seconds": 00,  # Start 30 sec after NIFTY to avoid rate limit
-        "send_signal_emails": True,  # Email every generated buy/sell signal
-    },
-
-    "NIFTYSupperBuy": {
-        "script_name": "NIFTYSupperBuy.py",
-        "description": "NIFTY 2-minute Supertrend long-option strategy",
-        "enabled": True,
-        "run_days": list(DayOfWeek)[:5],
-        "run_time_start": "09:15",
-        "run_time_end": "15:32",
-        "api_delay_seconds": 0,
-        "send_signal_emails": True,
-        "entry_window_start": "09:15",
-        "entry_window_end": "15:10",
-        "run_end_time": "15:30",
-        "milestone_points_by_side": {"CE": 20, "PE": 20},
-    },
-
-    "SENSEXSupperBuy": {
-        "script_name": "SENSEXSupperBuy.py",
-        "description": "SENSEX 2-minute Supertrend long-option strategy",
-        "enabled": False,
-        "run_days": list(DayOfWeek)[:5],
-        "run_time_start": "09:15",
-        "run_time_end": "15:32",
-        "api_delay_seconds": 0,
-        "send_signal_emails": True,
-        "entry_window_start": "09:15",
-        "entry_window_end": "15:10",
-        "run_end_time": "15:30",
-        "milestone_points_by_side": {"CE": 30, "PE": 30},
+        "run_time_start": "09:12",
+        "run_time_end": "15:30",
+        "api_delay_seconds": 10,  # Start 30 sec after NIFTY to avoid rate limit
+        "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
     "320trade": {
         "script_name": "320trade.py",
-        "description": "Expiry-day 3:20 ITM CE+PE Strategy",
+        "description": "Expiry-day 3:20 ATM CE+PE Straddle Strategy",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "15:15",
+        "run_time_start": "15:18",
         "run_time_end": "15:30",
         "api_delay_seconds": 0,
-        "send_signal_emails": True,  # Email every generated buy/sell signal
+        "send_signal_emails": False,  # One final summary after close, not every signal
     },
     
     "OILMINI": {
         "script_name": "OILMINI.py",
         "description": "Crude Oil Mini Options Strategy",
-        "enabled": True,
+        "enabled": False,
+        "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": [],
-        "run_time_start": "15:30",
-        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
-        "api_delay_seconds": 0,
+        "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
+        "run_time_start": "16:00",
+        "run_time_end": "23:30",  # MCX trades longer
+        "api_delay_seconds": 10,  # Start 60 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
-    },
-
-    "GOLDMINI": {
-        "script_name": "GOLDMINI.py",
-        "description": "Gold Mini Options Strategy",
-        "enabled": True,
-        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
-                     DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": None,
-        "run_time_start": "15:30",
-        "run_time_end": "23:35",
-        "api_delay_seconds": 45,
-        "send_signal_emails": True,
     },
     
     "NATGASMINI": {
         "script_name": "NATGASMINI.py",
         "description": "Natural Gas Mini Options Strategy",
         "enabled": True,
+        "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": [],
-        "run_time_start": "15:30",
-        "run_time_end": "23:35",  # Allow the strategy to complete its 23:30 square-off
-        "api_delay_seconds": 90,
+        "run_days_of_month": None,  # Every day of the month
+        "run_time_start": "16:00",
+        "run_time_end": "23:30",  # MCX trades longer
+        "api_delay_seconds": 10,  # Start 90 sec after NIFTY
         "send_signal_emails": True,  # Email alerts on buy/sell signals
     },
 
@@ -179,22 +133,9 @@ SCRIPTS_SCHEDULE = {
         "enabled": True,
         "run_days": [DayOfWeek.FRIDAY],
         "run_time_start": "23:00",
-        "run_time_end": "23:30",
+        "run_time_end": "23:05",
         "api_delay_seconds": 0,
         "send_signal_emails": True,
-    },
-
-    "SupperDayScan": {
-        "script_name": "SupperDayScan.py",
-        "description": "Daily-candle stock scanner for Supertrend BUY signals",
-        "enabled": True,
-        "run_days": list(DayOfWeek),
-        "run_time_start": "23:30",
-        "run_time_end": "23:59",
-        "run_once_per_window": True,
-        "api_delay_seconds": 0,
-        "send_signal_emails": True,
-        "send_daily_summary_on_stop": False,
     },
 }
 
@@ -216,16 +157,12 @@ CONFIG = {
         "smtp_port": 465,
         "use_ssl": True,
         "smtp_username": "",
+        "smtp_password": "",
         "from_email": "",
         "to_emails": [],
-        "signal_recipients": [],
-        "scan_report_recipients": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
-        "send_weekly_summary_on_monday": True,
-        "weekly_summary_recipients": [],
-        "daily_summary_recipients": [],
-        "error_recipients": [],
+        "scan_report_recipients": [],  # Recipients for scan reports
     },
 }
 
@@ -263,29 +200,8 @@ def _normalize_run_day(day_value):
     return None
 
 
-def _load_project_env():
-    """Load project environment variables from .env without overriding the process environment."""
-    env_file = Path(__file__).resolve().with_name(".env")
-    if not env_file.exists():
-        return
-
-    try:
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        logger.error(f"[CONFIG] Failed to read {env_file.name}: {exc}")
-        raise
-
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
 def load_scheduler_config():
     """Load optional scheduler overrides from scheduler_config.json."""
-    _load_project_env()
     if not CONFIG_FILE.exists():
         logger.info(f"[CONFIG] Using in-file schedule defaults (missing {CONFIG_FILE.name})")
         return
@@ -383,7 +299,7 @@ def append_run_log(log_path, message):
 
 
 def cleanup_old_logs():
-    """Delete files in scheduler log directories older than the retention window."""
+    """Delete scheduler logs older than the configured retention window."""
     retention_days = int(CONFIG.get("log_retention_days", 2) or 2)
     cutoff = datetime.now() - timedelta(days=retention_days)
     deleted_count = 0
@@ -401,15 +317,12 @@ def cleanup_old_logs():
                 except FileNotFoundError:
                     continue
                 except Exception as exc:
-                    logger.error(f"[LOG] Failed to remove old file {entry.name}: {exc}")
+                    logger.error(f"[LOG] Failed to remove old log {entry.name}: {exc}")
         except FileNotFoundError:
             continue
 
     if deleted_count:
-        logger.info(
-            f"[LOG] Deleted {deleted_count} file(s) from scheduler log directories "
-            f"older than {retention_days} day(s)"
-        )
+        logger.info(f"[LOG] Deleted {deleted_count} log file(s) older than {retention_days} day(s)")
 
 
 def send_email_notification(subject, body, attachment_path=None, html_body=None, recipients=None):
@@ -418,11 +331,10 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     if not email_cfg.get("enabled", False):
         return False
 
-    recipients = recipients if recipients is not None else email_cfg.get("to_emails")
-    recipients = [recipients] if isinstance(recipients, str) else list(recipients or [])
+    recipients = recipients or email_cfg.get("to_emails") or []
     smtp_host = str(email_cfg.get("smtp_host", "") or "").strip()
     smtp_username = str(email_cfg.get("smtp_username", "") or "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_password = str(email_cfg.get("smtp_password", "") or "").strip()
     from_email = str(email_cfg.get("from_email", smtp_username) or smtp_username).strip()
     smtp_port = int(email_cfg.get("smtp_port", 465) or 465)
 
@@ -439,9 +351,8 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     message["From"] = from_email
     message["To"] = ", ".join(recipients)
     message.set_content(body)
-
     if html_body:
-        message.add_alternative(html_body, subtype="html")
+        message.add_alternative(str(html_body), subtype="html")
 
     if attachment_path is not None:
         attachment = Path(attachment_path)
@@ -456,21 +367,15 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
                     filename=attachment.name,
                 )
 
-    stage = "SMTP connection"
     try:
         if email_cfg.get("use_ssl", True):
             with smtplib.SMTP_SSL(smtp_host, smtp_port) as smtp:
-                stage = "SMTP authentication"
                 smtp.login(smtp_username, smtp_password)
-                stage = "message submission"
                 smtp.send_message(message)
         else:
             with smtplib.SMTP(smtp_host, smtp_port) as smtp:
-                stage = "STARTTLS negotiation"
                 smtp.starttls()
-                stage = "SMTP authentication"
                 smtp.login(smtp_username, smtp_password)
-                stage = "message submission"
                 smtp.send_message(message)
         logger.info(f"[EMAIL] Sent: {subject}")
         return True
@@ -478,34 +383,8 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
         logger.warning(f"[EMAIL] Interrupted while sending '{subject}'")
         return False
     except Exception as exc:
-        logger.error(
-            f"[EMAIL] Failed during {stage} for '{subject}' "
-            f"({type(exc).__name__}): {exc}"
-        )
+        logger.error(f"[EMAIL] Failed to send '{subject}': {exc}")
         return False
-
-
-def email_script_failure(config_key, category, details):
-    """Send at most one alert of each failure category per script and day."""
-    email_cfg = CONFIG.get("email_notifications", {})
-    recipients = email_cfg.get("error_recipients")
-    if not recipients:
-        logger.warning(f"[EMAIL] No failure-alert recipients configured for {config_key}")
-        return False
-
-    today = get_ist_time().date().isoformat()
-    alert_key = (today, config_key, category)
-    if alert_key in FAILURE_ALERTS_SENT:
-        return False
-    FAILURE_ALERTS_SENT.add(alert_key)
-
-    subject = f"[SCRIPT ERROR] {config_key}: {category}"
-    body = (
-        f"Script: {config_key}\n"
-        f"Issue: {details}\n"
-        f"Time: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S %Z')}"
-    )
-    return send_email_notification(subject, body, recipients=recipients)
 
 
 def finalize_run_log(run_context, ended_at, reason, exit_code=None):
@@ -550,49 +429,15 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
     exit_code = process.poll()
     final_log_path = finalize_run_log(run_context, ended_at, reason, exit_code=exit_code)
     logger.info(f"[STOPPED] {run_context['config_key']} stopped | Reason={reason} | ExitCode={exit_code} | Log={final_log_path.name}")
-    if reason not in {
-        "Scheduler stopped by user",
-        "Strategy skipped by configured startup guard",
-    }:
+    if reason != "Scheduler stopped by user":
         email_daily_trade_summary(run_context, reason)
     return exit_code
 
 
 def classify_process_exit(run_context, exit_code):
     """Classify script exits so fatal repeated errors can be suppressed for the current window."""
-    if str(run_context.get("config_key") or "").upper() == "320TRADE" and exit_code == 0:
-        return "strategy_complete", "320trade completed normally", False
-
     recent_output = [line.strip() for line in run_context.get("recent_output", []) if str(line).strip()]
     normalized_output = "\n".join(recent_output[-10:]).lower()
-    if (
-        str(run_context.get("config_key") or "").upper()
-        in {"NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}
-        and exit_code == 0
-        and "[strategy complete] all open positions closed at 15:30 ist" in normalized_output
-    ):
-        return "strategy_complete", "SuperBuy positions closed at 15:30 IST", False
-
-    if (
-        str(run_context.get("config_key") or "").upper() == "SUPPERDAYSCAN"
-        and exit_code == 0
-        and "[scan complete] supperdayscan" in normalized_output
-    ):
-        return "strategy_complete", "Daily stock scan completed normally", False
-
-    if (
-        str(run_context.get("config_key") or "").upper() in {"NIFTYINTRA", "SENSEXINTRA"}
-        and exit_code == 0
-        and "[strategy complete] all open positions closed at 15:15 ist" in normalized_output
-    ):
-        return "strategy_complete", "Intraday positions closed at 15:15 IST", False
-
-    if (
-        str(run_context.get("config_key") or "").upper() in {"OILMINI", "GOLDMINI", "NATGASMINI"}
-        and exit_code == 0
-        and any("[SKIP]" in line for line in recent_output)
-    ):
-        return "strategy_skipped", "Commodity strategy skipped by a startup guard", False
 
     if (
         "authentication failed" in normalized_output
@@ -647,49 +492,30 @@ def handle_process_state_changes(running_processes, script_launch_logged, blocke
             continue
 
         returncode = process.returncode
+        if returncode == 0 and _is_scan_script(config_key, run_context.get("script_name", "")):
+            logger.info(f"[COMPLETE] {config_key} completed normally")
+            stop_script(
+                run_context,
+                SCRIPTS_SCHEDULE[config_key],
+                reason="Scanner completed normally",
+                terminate_process=False,
+            )
+            del running_processes[config_key]
+            script_launch_logged.discard(config_key)
+            continue
+
         failure_signature, failure_summary, is_fatal = classify_process_exit(run_context, returncode)
         run_context["failure_signature"] = failure_signature
         run_context["failure_summary"] = failure_summary
-        completed_normally = failure_signature == "strategy_complete"
-        completed_skipped = failure_signature == "strategy_skipped"
-        if completed_normally:
-            logger.info(f"[COMPLETED] {config_key} finished normally")
-        elif completed_skipped:
-            logger.info(f"[SKIPPED] {config_key} exited normally after a startup guard")
-        else:
-            logger.error(f"[CRASH] {config_key} crashed (exit code: {returncode})")
-            failure_category = failure_signature.partition(":")[0]
-            email_script_failure(
-                config_key,
-                failure_category,
-                f"Process exited unexpectedly with exit code {returncode}.",
-            )
+        logger.error(f"[CRASH] {config_key} crashed (exit code: {returncode})")
         stop_script(
             run_context,
             SCRIPTS_SCHEDULE[config_key],
-            reason=(
-                "Strategy completed normally"
-                if completed_normally
-                else "Strategy skipped by configured startup guard"
-                if completed_skipped
-                else "Process exited unexpectedly"
-            ),
+            reason="Process exited unexpectedly",
             terminate_process=False,
         )
         del running_processes[config_key]
         script_launch_logged.discard(config_key)
-
-        if completed_normally or completed_skipped or SCRIPTS_SCHEDULE[config_key].get("run_once_per_window"):
-            blocked_failures[config_key] = {
-                "signature": failure_signature,
-                "summary": failure_summary,
-                "blocked_at": get_ist_time(),
-            }
-            if not completed_normally and not completed_skipped:
-                logger.warning(
-                    f"[BLOCKED] {config_key} will not be relaunched during this run window"
-                )
-            continue
 
         if is_fatal:
             blocked_failures[config_key] = {
@@ -749,10 +575,6 @@ def should_script_run_now(script_config):
         if current_day_of_month not in run_days_of_month:
             return False
     # If run_days_of_month is None, allow any day of month
-
-    run_months = script_config.get("run_months")
-    if run_months is not None and now.month not in run_months:
-        return False
     
     # Check if current time is within trading window
     if not (run_start <= current_time <= run_end):
@@ -761,168 +583,38 @@ def should_script_run_now(script_config):
     return True
 
 
-def seconds_until_next_script_start(now=None):
-    now = now or get_ist_time()
-    delays = []
-    for script_config in SCRIPTS_SCHEDULE.values():
-        if not script_config.get("enabled", True):
-            continue
-        allowed_days = [
-            day for day in (_normalize_run_day(item) for item in script_config["run_days"])
-            if day is not None
-        ] if script_config.get("run_days") else []
-        if allowed_days and now.weekday() not in allowed_days:
-            continue
-        run_days_of_month = script_config.get("run_days_of_month")
-        if run_days_of_month is not None and now.day not in run_days_of_month:
-            continue
-        run_months = script_config.get("run_months")
-        if run_months is not None and now.month not in run_months:
-            continue
-        start_time = parse_time(script_config.get("run_time_start", "00:00"))
-        start_at = datetime.combine(now.date(), start_time, tzinfo=now.tzinfo)
-        delay = (start_at - now).total_seconds()
-        if delay > 0:
-            delays.append(delay)
-    return min(delays) if delays else None
-
-
 TRADE_SIGNAL_FIELDS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason",
-    "Lots", "LotSize", "Qty", "BuyAt", "SellAt", "PnL", "OrderPlaced",
-    "HighestPrice",
+    "Lots", "LotSize", "Qty", "OrderPlaced", "BuyAt", "SellAt", "PnL", "HighestPrice",
 )
 TRADE_SIGNAL_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(TRADE_SIGNAL_FIELDS) + r")="
 )
-GENERATED_SIGNAL_PATTERNS = (
-    re.compile(
-        r"\[(?:TRADE SETUP|STRATEGY SIGNAL)\]\s+Script=\S+.*?"
-        r"\bSide=(?P<side>BUY|SELL)\b.*?\bSymbol=(?P<symbol>\S+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\[(?P<side>BUY|SELL) SIGNAL\]\s+(?P<symbol>\S+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\[SIGNAL\]\s+\S+\s+(?P<side>BUY|SELL)\s+(?P<symbol>\S+)",
-        re.IGNORECASE,
-    ),
-)
-ORDER_CONFIRMATION_PATTERN = re.compile(
-    r"\[(?P<event>ORDER CONFIRMED|BUY CONFIRMED|PAPER BUY TRACKED)\]\s*(?P<details>.*)",
-    re.IGNORECASE,
-)
-ORDER_STATUS_FROM_TRADE_SIGNAL = {
-    "NIFTYINTRA", "SENSEXINTRA", "320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY",
-}
-ORDER_STATUS_AFTER_SIGNAL = {"OILMINI", "GOLDMINI", "NATGASMINI"}
-TRADE_RESULT_EMAIL_SCRIPTS = {"GOLDMINI", "OILMINI"}
 PRICE_MILESTONE_FIELDS = (
-    "Script", "Basis", "Time", "Symbol", "Side", "Strike", "Entry", "Price",
-    "Peak", "Move", "Direction", "Qty", "OrderPlaced",
+    "Script", "Time", "Symbol", "Side", "Strike", "Qty", "OrderPlaced",
+    "Entry", "Price", "Move", "Direction", "Peak",
 )
 PRICE_MILESTONE_FIELD_PATTERN = re.compile(
     r"(?:^|\s)(" + "|".join(PRICE_MILESTONE_FIELDS) + r")="
 )
 TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
-    "Lot Size", "Qty", "Order Placed", "Highest Price Observed",
+    "Lot Size", "Qty", "Order Placed",
 )
-LEGACY_TRADE_REPORT_COLUMNS = TRADE_REPORT_COLUMNS[:-1]
-SUMMARY_EMAIL_COLUMNS = (
-    "Script", "Side (CE/PE)", "Action", "Time", "Strike", "Price", "Reason",
-    "Lots", "Lot Size", "Qty", "Order Placed", "Highest Price Observed",
-)
-DAILY_SUMMARY_COLUMNS = (
-    "Side (CE/PE)", "Action", "Time", "Strike", "Price", "Reason",
-    "Qty", "Order Placed", "Highest Price Observed",
-)
-MONTHLY_REPORT_SHEETS = {
-    "NIFTYINTRA": "NIFTY",
-    "SENSEXINTRA": "SENSEX",
-    "NIFTYSUPPERBUY": "NIFTYSUPERBUY",
-    "SENSEXSUPPERBUY": "SENSEXSUPERBUY",
-    "NATGASMINI": "GAS",
-    "OILMINI": "OIL",
-    "GOLDMINI": "GOLD",
-}
 TRADE_REPORT_LOCK = threading.Lock()
+PRICE_MILESTONE_EMAIL_GUARD = {}
 
 
-def _initialize_trade_report_sheet(workbook, sheet=None, title="Trades"):
-    sheet = sheet or workbook.active
-    sheet.title = title
+def _initialize_trade_report_sheet(workbook):
+    sheet = workbook.active
+    sheet.title = "Trades"
     sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"
-    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16, 20), start=1):
+    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16), start=1):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
     sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
-    return sheet
-
-
-def _trade_report_values(trade):
-    row = []
-    for column in TRADE_REPORT_COLUMNS:
-        value = trade.get(column, "") if column == "Highest Price Observed" else trade[column]
-        if column in {"Strike", "Price", "Lots", "Lot Size", "Qty", "Highest Price Observed"} and value:
-            try:
-                number = float(value)
-                value = int(number) if number.is_integer() else number
-            except ValueError:
-                pass
-        row.append(value)
-    return row
-
-
-def _save_trade_report(workbook, report_path):
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{report_path.stem}.",
-            suffix=".xlsx",
-            dir=report_path.parent,
-            delete=False,
-        ) as temporary_file:
-            temporary_path = Path(temporary_file.name)
-        workbook.save(temporary_path)
-        os.replace(temporary_path, report_path)
-        temporary_path = None
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
-
-
-def _prepare_trade_report_sheet(workbook, sheet, report_path):
-    headers = tuple(next(sheet.iter_rows(min_row=1, max_row=1, values_only=True)))
-    if not any(headers):
-        return _initialize_trade_report_sheet(workbook, sheet, title=sheet.title)
-
-    if headers[:len(TRADE_REPORT_COLUMNS)] == TRADE_REPORT_COLUMNS:
-        event_key_column = len(TRADE_REPORT_COLUMNS) + 1
-    elif headers[:len(LEGACY_TRADE_REPORT_COLUMNS)] == LEGACY_TRADE_REPORT_COLUMNS:
-        high_column = len(LEGACY_TRADE_REPORT_COLUMNS) + 1
-        sheet.insert_cols(high_column)
-        high_cell = sheet.cell(row=1, column=high_column, value="Highest Price Observed")
-        high_cell.font = Font(bold=True)
-        sheet.column_dimensions[high_cell.column_letter].width = 20
-        event_key_column = high_column + 1
-    else:
-        raise ValueError(f"Unexpected trade report columns in {report_path}")
-
-    event_key_cell = sheet.cell(row=1, column=event_key_column)
-    if event_key_cell.value not in (None, "Event Key"):
-        raise ValueError(f"Unexpected trade report event key column in {report_path}")
-    event_key_cell.value = "Event Key"
-    event_key_cell.font = Font(bold=True)
-    sheet.column_dimensions[event_key_cell.column_letter].hidden = True
     return sheet
 
 
@@ -944,7 +636,7 @@ def parse_trade_signal(line):
     if fields["Side"].upper() not in {"BUY", "SELL"} or fields["OrderPlaced"].upper() not in {"YES", "NO"}:
         return None
 
-    trade = {
+    return {
         "Script": fields["Script"],
         "Side": fields["Side"].upper(),
         "Time": fields["Time"],
@@ -955,64 +647,16 @@ def parse_trade_signal(line):
         "Lots": fields.get("Lots", ""),
         "Lot Size": fields.get("LotSize", ""),
         "Qty": fields.get("Qty", ""),
-        "Buy Price": fields.get("BuyAt", ""),
-        "Sell Price": fields.get("SellAt", ""),
-        "PnL": fields.get("PnL", ""),
         "Order Placed": fields["OrderPlaced"].upper(),
-    }
-    if fields.get("HighestPrice"):
-        trade["Highest Price Observed"] = fields["HighestPrice"]
-    return trade
-
-
-def parse_generated_signal(line):
-    """Parse strategy-specific signal-generation output not covered by TRADE SIGNAL."""
-    for pattern in GENERATED_SIGNAL_PATTERNS:
-        match = pattern.search(line)
-        if match:
-            return {
-                "Side": match.group("side").upper(),
-                "Symbol": match.group("symbol"),
-                "Output": line,
-            }
-    return None
-
-
-def parse_order_confirmation(line):
-    """Parse explicit live or paper buy confirmation output."""
-    match = ORDER_CONFIRMATION_PATTERN.search(line)
-    if match is None:
-        return None
-
-    event = match.group("event").upper()
-    details = match.group("details").strip()
-    if event == "ORDER CONFIRMED":
-        side_match = re.search(r"\b(BUY|SELL)\b", details, re.IGNORECASE)
-        if side_match is None:
-            return None
-        side = side_match.group(1).upper()
-        symbol = details[side_match.end():].strip().split(maxsplit=1)
-        symbol = symbol[0] if symbol else "UNKNOWN"
-    else:
-        side = "BUY"
-        symbol = details.split(maxsplit=1)[0] if details else "UNKNOWN"
-
-    quantity_match = re.search(r"\bQty=(\S+)", details, re.IGNORECASE)
-    price_match = re.search(r"\bPrice=(\S+)", details, re.IGNORECASE)
-    time_match = re.search(r"\[(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)\]", line)
-    return {
-        "Event": event,
-        "Side": side,
-        "Symbol": symbol,
-        "Qty": quantity_match.group(1) if quantity_match else "",
-        "Price": price_match.group(1) if price_match else "",
-        "Time": time_match.group(1).replace(" ", "T") if time_match else "",
-        "Output": line,
+        "Buy At": fields.get("BuyAt", ""),
+        "Sell At": fields.get("SellAt", ""),
+        "PnL": fields.get("PnL", ""),
+        "Highest Price": fields.get("HighestPrice", ""),
     }
 
 
 def parse_price_milestone(line):
-    """Parse one structured price-milestone event from script output."""
+    """Parse one price milestone event from script output."""
     if "[PRICE MILESTONE]" not in line:
         return None
 
@@ -1023,89 +667,218 @@ def parse_price_milestone(line):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
         fields[match.group(1)] = line[start:end].strip()
 
-    required_fields = tuple(
-        field for field in PRICE_MILESTONE_FIELDS
-        if field not in {"Basis", "Peak", "Strike", "Qty", "OrderPlaced"}
+    required_fields = (
+        "Script", "Time", "Symbol", "Side", "Strike", "OrderPlaced", "Entry", "Price", "Move", "Direction"
     )
     if any(not fields.get(field) for field in required_fields):
         return None
-    fields.setdefault("Basis", "OPTION")
-    return fields
+
+    if fields["OrderPlaced"].upper() not in {"YES", "NO"}:
+        return None
+
+    return {
+        "Script": fields["Script"],
+        "Time": fields["Time"],
+        "Symbol": fields["Symbol"],
+        "Side": fields["Side"],
+        "Strike": fields["Strike"],
+        "Qty": fields.get("Qty", ""),
+        "Order Placed": fields["OrderPlaced"].upper(),
+        "Entry": fields["Entry"],
+        "Price": fields["Price"],
+        "Move": fields["Move"],
+        "Direction": fields["Direction"].upper(),
+        "Peak": fields.get("Peak", ""),
+    }
 
 
-def record_price_milestone(run_context, output_line):
-    """Track the latest milestone and highest price observed in milestone events."""
-    milestone = parse_price_milestone(output_line)
-    if milestone is None:
-        return
+def _extract_option_side(symbol):
+    symbol_upper = str(symbol or "").upper()
+    if symbol_upper.endswith("-CE"):
+        return "CE"
+    if symbol_upper.endswith("-PE"):
+        return "PE"
+    return "NA"
 
+
+def _format_signal_time_short(iso_or_text):
     try:
-        price = float(milestone["Price"])
+        dt = datetime.fromisoformat(str(iso_or_text).replace("Z", "+00:00"))
+        return dt.strftime("%H:%M")
     except ValueError:
-        logger.error(
-            "[REPORT] Invalid milestone price for %s: %s",
-            run_context.get("config_key"),
-            milestone["Price"],
-        )
-        return
-
-    run_context["last_price_milestone"] = milestone
-    key = (
-        milestone["Basis"].upper(),
-        milestone["Symbol"],
-        milestone["Side"].upper(),
-    )
-    recorded_high = float(milestone.get("Peak", price))
-    highest_prices = run_context.setdefault("highest_milestone_prices", {})
-    previous = highest_prices.get(key)
-    if previous is None or recorded_high > previous["price"]:
-        highest_prices[key] = {"price": recorded_high, "time": milestone["Time"]}
+        text = str(iso_or_text)
+        if "T" in text and len(text.split("T", 1)[1]) >= 5:
+            return text.split("T", 1)[1][:5]
+        return text
 
 
-def _price_milestone_summary(run_context):
-    """Format milestone details for text and HTML summary emails."""
-    milestone = run_context.get("last_price_milestone")
-    if milestone:
-        last_text = (
-            f"{milestone['Time']} | {milestone['Basis']} | {milestone['Symbol']} "
-            f"{milestone['Side']} | Price {milestone['Price']} | "
-            f"Move {milestone['Move']} ({milestone['Direction']})"
-        )
-        if milestone.get("Peak"):
-            last_text += f" | Peak {milestone['Peak']}"
+def _format_script_display_name(script_name):
+    name = str(script_name or "").strip()
+    if not name:
+        return "UNKNOWN"
+    if len(name) > 1 and name[1:].upper() == name[1:]:
+        return name.upper()
+    return name
+
+
+def _to_float_text(value):
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _to_int_text(value):
+    try:
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(number)
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _build_trade_email_subject(trade):
+    live_prefix = "LIVE TRADE" if trade.get("Order Placed", "NO") == "YES" else "PAPER TRADE"
+    script_name = _format_script_display_name(trade.get("Script"))
+    side = _extract_option_side(trade.get("Symbol"))
+    strike = trade.get("Strike", "NA")
+    action = trade.get("Side", "NA").upper()
+    short_time = _format_signal_time_short(trade.get("Time"))
+    return f"[{live_prefix}] {script_name} {action} {side} {strike} at {short_time}"
+
+
+def _build_trade_email_content(trade):
+    action = trade.get("Side", "NA").upper()
+    action_label = "BUY" if action == "BUY" else "SELL"
+    side = _extract_option_side(trade.get("Symbol"))
+    script_name = _format_script_display_name(trade.get("Script"))
+    real_order_text = "Yes" if trade.get("Order Placed", "NO") == "YES" else "No"
+
+    lines = [
+        "Option trade signal",
+        "",
+        f"Script name: {script_name}",
+        f"Time: {_format_signal_time_short(trade.get('Time'))}",
+        f"Strike: {trade.get('Strike', '')}",
+        f"Signal: {action_label}",
+    ]
+
+    if action_label == "BUY":
+        lines.append(f"Buy price: {_to_float_text(trade.get('Price'))}")
     else:
-        last_text = "None recorded during this run."
+        entry_value = trade.get("Buy At") or trade.get("Entry") or ""
+        if entry_value:
+            lines.append(f"Entry: {_to_float_text(entry_value)}")
+        sell_value = trade.get("Sell At") or trade.get("Price")
+        lines.append(f"Sell price: {_to_float_text(sell_value)}")
 
-    highest_prices = run_context.get("highest_milestone_prices", {})
-    if highest_prices:
-        high_text = "\n".join(
-            f"{basis} {symbol} {side}: {details['price']:.2f} at {details['time']}"
-            for (basis, symbol, side), details in sorted(highest_prices.items())
-        )
-        high_html = "".join(
-            "<li>"
-            f"{html.escape(basis)} {html.escape(symbol)} {html.escape(side)}: "
-            f"{details['price']:.2f} at {html.escape(str(details['time']))}"
-            "</li>"
-            for (basis, symbol, side), details in sorted(highest_prices.items())
-        )
+    lines.extend([
+        f"Side: {side}",
+        f"Quantity: {_to_int_text(trade.get('Qty'))}",
+        f"Real order: {real_order_text}",
+    ])
+
+    highest = trade.get("Highest Price")
+    pnl = trade.get("PnL")
+    if action_label == "SELL":
+        lines.append(f"MA price recorded: {_to_float_text(highest)}" if highest else "MA price recorded:")
+        lines.append(f"PNL: {_to_int_text(pnl)}" if pnl else "PNL:")
+
+    html_lines = [
+        "<p><strong>Option trade signal</strong></p>",
+        "<table>",
+        f"<tr><td>Script name</td><td>{script_name}</td></tr>",
+        f"<tr><td>Time</td><td>{_format_signal_time_short(trade.get('Time'))}</td></tr>",
+        f"<tr><td>Strike</td><td>{trade.get('Strike', '')}</td></tr>",
+        f"<tr><td>Signal</td><td><strong>{action_label}</strong></td></tr>",
+    ]
+
+    if action_label == "BUY":
+        html_lines.append(f"<tr><td>Buy price</td><td>{_to_float_text(trade.get('Price'))}</td></tr>")
     else:
-        high_text = "None recorded during this run."
-        high_html = "<li>None recorded during this run.</li>"
+        entry_value = trade.get("Buy At") or trade.get("Entry") or ""
+        if entry_value:
+            html_lines.append(f"<tr><td>Entry</td><td>{_to_float_text(entry_value)}</td></tr>")
+        sell_value = trade.get("Sell At") or trade.get("Price")
+        html_lines.append(f"<tr><td>Sell price</td><td>{_to_float_text(sell_value)}</td></tr>")
 
-    text = (
-        "Price milestones\n"
-        f"Last recorded milestone: {last_text}\n"
-        "Highest price observed in milestone events:\n"
-        f"{high_text}"
+    html_lines.extend([
+        f"<tr><td>Side</td><td>{side}</td></tr>",
+        f"<tr><td>Quantity</td><td>{_to_int_text(trade.get('Qty'))}</td></tr>",
+        f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
+    ])
+
+    if action_label == "SELL":
+        html_lines.append(
+            f"<tr><td>MA price recorded</td><td>{_to_float_text(highest)}</td></tr>" if highest else "<tr><td>MA price recorded</td><td></td></tr>"
+        )
+        html_lines.append(
+            f"<tr><td>PNL</td><td>{_to_int_text(pnl)}</td></tr>" if pnl else "<tr><td>PNL</td><td></td></tr>"
+        )
+
+    html_lines.append("</table>")
+    return "\n".join(lines), "\n".join(html_lines)
+
+
+def _build_price_milestone_subject(milestone):
+    move_text = _to_float_text(milestone.get("Move"))
+    direction = milestone.get("Direction", "NA")
+    return (
+        f"[PRICE MOVE] {milestone.get('Script')} Option "
+        f"{move_text} points ({direction}) - {milestone.get('Side')} "
+        f"{milestone.get('Symbol')} at {milestone.get('Time')}"
     )
-    html_section = (
-        "<h3>Price milestones</h3>"
-        f"<p>Last recorded milestone: {html.escape(last_text)}</p>"
-        "<p>Highest price observed in milestone events:</p>"
-        f"<ul>{high_html}</ul>"
-    )
-    return text, html_section
+
+
+def _build_price_milestone_content(milestone):
+    script_name = _format_script_display_name(milestone.get("Script"))
+    real_order_text = "Yes" if milestone.get("Order Placed", "NO") == "YES" else "No"
+    price_move_text = f"{_to_float_text(milestone.get('Move'))} points ({milestone.get('Direction', 'NA')})"
+
+    lines = [
+        "Option price milestone",
+        "",
+        f"Script name: {script_name}",
+        f"Time: {milestone.get('Time')}",
+        f"Strike: {milestone.get('Strike')}",
+        "Signal: PRICE MOVE",
+        f"Entry: {_to_float_text(milestone.get('Entry'))}",
+        f"Current premium: {_to_float_text(milestone.get('Price'))}",
+        f"Quantity: {_to_int_text(milestone.get('Qty'))}",
+        f"Real order: {real_order_text}",
+        f"Price move: {price_move_text}",
+    ]
+
+    peak = milestone.get("Peak")
+    retracement_text = ""
+    if peak:
+        try:
+            retracement_text = _to_float_text(float(peak) - float(milestone.get("Price")))
+        except (TypeError, ValueError):
+            retracement_text = ""
+    if retracement_text:
+        lines.append(f"Retracement from peak: {retracement_text} (peak {peak})")
+
+    html_lines = [
+        "<p><strong>Option price milestone</strong></p>",
+        "<table>",
+        f"<tr><td>Script name</td><td>{script_name}</td></tr>",
+        f"<tr><td>Time</td><td>{milestone.get('Time')}</td></tr>",
+        f"<tr><td>Strike</td><td>{milestone.get('Strike')}</td></tr>",
+        "<tr><td>Signal</td><td>PRICE MOVE</td></tr>",
+        f"<tr><td>Entry</td><td>{_to_float_text(milestone.get('Entry'))}</td></tr>",
+        f"<tr><td>Current premium</td><td>{_to_float_text(milestone.get('Price'))}</td></tr>",
+        f"<tr><td>Quantity</td><td>{_to_int_text(milestone.get('Qty'))}</td></tr>",
+        f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
+        f"<tr><td>Price move</td><td><strong>{price_move_text}</strong></td></tr>",
+    ]
+
+    if retracement_text:
+        html_lines.append(
+            f"<tr><td>Retracement from peak</td><td>{retracement_text} (peak {peak})</td></tr>"
+        )
+
+    html_lines.append("</table>")
+    return "\n".join(lines), "\n".join(html_lines)
 
 
 def _trade_report_path(config_key, trade_time):
@@ -1122,77 +895,32 @@ def append_trade_to_report(config_key, trade):
     event_key = hashlib.sha256(event_data.encode("utf-8")).hexdigest()
     report_path = _trade_report_path(config_key, trade["Time"])
     with TRADE_REPORT_LOCK:
-        workbook = load_workbook(report_path) if report_path.exists() else Workbook()
-        try:
-            if "Trades" in workbook.sheetnames:
-                sheet = _prepare_trade_report_sheet(workbook, workbook["Trades"], report_path)
-            else:
-                sheet = _initialize_trade_report_sheet(workbook, workbook.create_sheet("Trades"))
-
+        if report_path.exists():
+            workbook = load_workbook(report_path)
+            sheet = workbook["Trades"]
             key_column = len(TRADE_REPORT_COLUMNS) + 1
             if any(
                 row[0].value == event_key
                 for row in sheet.iter_rows(min_row=2, min_col=key_column, max_col=key_column)
             ):
                 return report_path, False
+        else:
+            workbook = Workbook()
+            sheet = _initialize_trade_report_sheet(workbook)
 
-            sheet.append(tuple(_trade_report_values(trade)) + (event_key,))
-            sheet.auto_filter.ref = sheet.dimensions
-            _save_trade_report(workbook, report_path)
-        finally:
-            workbook.close()
-    return report_path, True
-
-
-def _monthly_trade_report_path(trade_time):
-    try:
-        trade_date = datetime.fromisoformat(trade_time.replace("Z", "+00:00"))
-    except ValueError:
-        trade_date = get_ist_time()
-    month_label = trade_date.strftime("%b").upper()
-    return MONTHLY_REPORT_DIR / f"NIFTY_{month_label}.xlsx"
-
-
-def _create_monthly_trade_report():
-    workbook = Workbook()
-    for index, sheet_name in enumerate(MONTHLY_REPORT_SHEETS.values()):
-        sheet = workbook.active if index == 0 else workbook.create_sheet()
-        _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
-    return workbook
-
-
-def append_trade_to_monthly_report(config_key, trade):
-    """Append a unique market signal to the persistent workbook for its month."""
-    sheet_name = MONTHLY_REPORT_SHEETS.get(str(config_key).upper())
-    if sheet_name is None:
-        return None, False
-
-    event_data = json.dumps(trade, sort_keys=True, separators=(",", ":"))
-    event_key = hashlib.sha256(event_data.encode("utf-8")).hexdigest()
-    report_path = _monthly_trade_report_path(trade["Time"])
-    with TRADE_REPORT_LOCK:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        workbook = load_workbook(report_path) if report_path.exists() else _create_monthly_trade_report()
-        try:
-            if sheet_name not in workbook.sheetnames:
-                sheet = _initialize_trade_report_sheet(
-                    workbook, workbook.create_sheet(), title=sheet_name
-                )
-            else:
-                sheet = _prepare_trade_report_sheet(workbook, workbook[sheet_name], report_path)
-
-            key_column = len(TRADE_REPORT_COLUMNS) + 1
-            if any(
-                row[0].value == event_key
-                for row in sheet.iter_rows(min_row=2, min_col=key_column, max_col=key_column)
-            ):
-                return report_path, False
-
-            sheet.append(tuple(_trade_report_values(trade)) + (event_key,))
-            sheet.auto_filter.ref = sheet.dimensions
-            _save_trade_report(workbook, report_path)
-        finally:
-            workbook.close()
+        row = []
+        for column in TRADE_REPORT_COLUMNS:
+            value = trade[column]
+            if column in {"Strike", "Price", "Lots", "Lot Size", "Qty"} and value:
+                try:
+                    number = float(value)
+                    value = int(number) if number.is_integer() else number
+                except ValueError:
+                    pass
+            row.append(value)
+        sheet.append(tuple(row) + (event_key,))
+        sheet.auto_filter.ref = sheet.dimensions
+        workbook.save(report_path)
     return report_path, True
 
 
@@ -1206,11 +934,8 @@ def _ensure_trade_report_exists(report_path):
         if report_path.exists():
             return
         workbook = Workbook()
-        try:
-            _initialize_trade_report_sheet(workbook)
-            _save_trade_report(workbook, report_path)
-        finally:
-            workbook.close()
+        _initialize_trade_report_sheet(workbook)
+        workbook.save(report_path)
 
 
 def _trade_report_summary(report_path):
@@ -1234,293 +959,66 @@ def _trade_report_summary(report_path):
         workbook.close()
 
 
-def _trade_report_rows(report_path, sheet_name="Trades"):
-    workbook = load_workbook(report_path, read_only=True, data_only=True)
+def _extract_320trade_summary(run_context):
+    """Extract the final CE/PE executed outcome from the script run log."""
+    config_key = str(run_context.get("config_key") or "").upper()
+    if config_key != "320TRADE":
+        return None
+
+    log_path = run_context.get("run_log_path")
+    if not log_path:
+        return None
+
+    path = Path(log_path)
+    if not path.exists():
+        return None
+
+    pattern = re.compile(
+        r"\[TRADE RESULT\]\s+Script=\S+\s+Side=(?P<side>\S+)\s+"
+        r"Symbol=(?P<symbol>\S+)\s+Strike=(?P<strike>\S+)\s+"
+        r"BuyAt=(?P<buy>[-+]?\d*\.?\d+)\s+"
+        r"SellAt=(?P<sell>[-+]?\d*\.?\d+)\s+"
+        r"PnL=(?P<pnl>[-+]?\d*\.?\d+)"
+    )
+
+    latest_by_symbol = {}
     try:
-        if sheet_name not in workbook.sheetnames:
-            return []
-        sheet = workbook[sheet_name]
-        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        required_columns = set(TRADE_REPORT_COLUMNS) - {"Highest Price Observed"}
-        missing_columns = required_columns.difference(headers)
-        if missing_columns:
-            raise ValueError(
-                f"Missing trade report columns in {report_path}: {', '.join(sorted(missing_columns))}"
-            )
-        indices = {
-            name: headers.index(name)
-            for name in TRADE_REPORT_COLUMNS
-            if name in headers
-        }
-        return [
-            {
-                name: row[indices[name]] if name in indices else ""
-                for name in TRADE_REPORT_COLUMNS
-            }
-            for row in sheet.iter_rows(min_row=2, values_only=True)
-            if any(value is not None for value in row[:len(TRADE_REPORT_COLUMNS)])
-        ]
-    finally:
-        workbook.close()
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                match = pattern.search(line.strip())
+                if not match:
+                    continue
+                symbol = match.group("symbol")
+                row = {
+                    "side": match.group("side"),
+                    "buy": float(match.group("buy")),
+                    "sell": float(match.group("sell")),
+                    "pnl": float(match.group("pnl")),
+                }
+                latest_by_symbol[symbol] = row
+    except Exception as exc:
+        logger.warning(f"[REPORT] Failed to parse 320trade result summary: {exc}")
+        return None
 
+    if not latest_by_symbol:
+        return None
 
-def _trade_rows_html(rows, columns=SUMMARY_EMAIL_COLUMNS):
-    header_cells = "".join(f"<th>{html.escape(column)}</th>" for column in columns)
-    if not rows:
-        return "<p>No trade signals were recorded.</p>"
-    short_time = columns == DAILY_SUMMARY_COLUMNS
-    table_rows = "".join(
-        "<tr>"
-        + "".join(
-            f"<td>{html.escape(str(_summary_trade_value(row, column, short_time) or ''))}</td>"
-            for column in columns
+    summary_lines = []
+    total_pnl = 0.0
+    for symbol in sorted(latest_by_symbol):
+        row = latest_by_symbol[symbol]
+        total_pnl += row["pnl"]
+        summary_lines.append(
+            f"{symbol}: BUY={row['buy']:.2f}, SELL={row['sell']:.2f}, PnL={row['pnl']:.2f}"
         )
-        + "</tr>"
-        for row in rows
-    )
-    return (
-        "<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
-        + header_cells
-        + "</tr></thead><tbody>"
-        + table_rows
-        + "</tbody></table>"
-    )
-
-
-def _trade_rows_text(rows, columns=SUMMARY_EMAIL_COLUMNS):
-    if not rows:
-        return "No trade signals were recorded."
-    short_time = columns == DAILY_SUMMARY_COLUMNS
-    return "\n".join(
-        [
-            " | ".join(columns),
-            *(
-                " | ".join(
-                    str(_summary_trade_value(row, column, short_time) or "")
-                    for column in columns
-                )
-                for row in rows
-            ),
-        ]
-    )
-
-
-def _summary_trade_value(row, column, short_time=False):
-    if column == "Action":
-        return row.get("Side")
-    if column == "Side (CE/PE)":
-        match = re.search(r"(CE|PE)$", str(row.get("Symbol") or "").upper())
-        return match.group(1) if match else ""
-    if column == "Time" and short_time:
-        value = row.get("Time")
-        if not value:
-            return ""
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%H:%M:%S")
-        except ValueError:
-            return value
-    return row.get(column)
-
-
-def _completed_trade_outcomes(report_path):
-    workbook = load_workbook(report_path, read_only=True, data_only=True)
-    try:
-        sheet = workbook["Trades"]
-        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        indices = {
-            name: headers.index(name)
-            for name in TRADE_REPORT_COLUMNS
-            if name in headers
-        }
-        open_buys = {}
-        outcomes = []
-        for values in sheet.iter_rows(min_row=2, values_only=True):
-            side = str(values[indices["Side"]] or "").upper()
-            symbol = str(values[indices["Symbol"]] or "")
-            if side not in {"BUY", "SELL"} or not symbol:
-                continue
-            try:
-                price = float(values[indices["Price"]])
-                quantity = float(values[indices["Qty"]] or 0)
-            except (TypeError, ValueError):
-                continue
-            if side == "BUY":
-                open_buys.setdefault(symbol, []).append((price, quantity))
-                continue
-            buys = open_buys.get(symbol, [])
-            remaining_sell_quantity = quantity
-            while buys and remaining_sell_quantity > 0:
-                buy_price, buy_quantity = buys.pop(0)
-                matched_quantity = min(buy_quantity, remaining_sell_quantity)
-                outcomes.append((price - buy_price) * matched_quantity)
-                remaining_sell_quantity -= matched_quantity
-                if buy_quantity > matched_quantity:
-                    buys.insert(0, (buy_price, buy_quantity - matched_quantity))
-        return outcomes
-    finally:
-        workbook.close()
-
-
-def _320trade_outcome_rows(report_path):
-    workbook = load_workbook(report_path, read_only=True, data_only=True)
-    try:
-        sheet = workbook["Trades"]
-        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
-        indices = {
-            name: headers.index(name)
-            for name in TRADE_REPORT_COLUMNS
-            if name in headers
-        }
-        open_buys = {}
-        outcomes = []
-        for values in sheet.iter_rows(min_row=2, values_only=True):
-            row = {name: values[index] for name, index in indices.items()}
-            symbol = str(row["Symbol"] or "")
-            side = str(row["Side"] or "").upper()
-            if not symbol or side not in {"BUY", "SELL"}:
-                continue
-            try:
-                price = float(row["Price"])
-                quantity = float(row["Qty"] or 0)
-            except (TypeError, ValueError):
-                continue
-            if quantity <= 0:
-                continue
-
-            if side == "BUY":
-                open_buys.setdefault(symbol, []).append({
-                    "row": row,
-                    "remaining": quantity,
-                })
-                continue
-
-            remaining_sell = quantity
-            buys = open_buys.get(symbol, [])
-            while buys and remaining_sell > 0:
-                buy_entry = buys[0]
-                buy = buy_entry["row"]
-                is_live = str(buy["Order Placed"] or "").upper() == "YES"
-                sell_was_placed = str(row["Order Placed"] or "").upper() == "YES"
-                if is_live and not sell_was_placed:
-                    break
-
-                matched_quantity = min(buy_entry["remaining"], remaining_sell)
-                buy_price = float(buy["Price"])
-                mode = "LIVE" if is_live else "PAPER"
-                outcomes.append({
-                    "symbol": symbol,
-                    "strike": buy["Strike"] or row["Strike"] or "",
-                    "buy_price": buy_price,
-                    "sell_time": row["Time"] or "",
-                    "sell_price": price,
-                    "quantity": matched_quantity,
-                    "pnl": (price - buy_price) * matched_quantity,
-                    "mode": mode,
-                    "exit_reason": row["Reason"] or "",
-                    "order_placed": is_live and sell_was_placed,
-                })
-                buy_entry["remaining"] -= matched_quantity
-                remaining_sell -= matched_quantity
-                if buy_entry["remaining"] <= 0:
-                    buys.pop(0)
-        return outcomes
-    finally:
-        workbook.close()
-
-
-def _320trade_summary_email_content(run_context, reason, report_path, counts, title):
-    outcomes = _320trade_outcome_rows(report_path)
-    trade_rows = _trade_report_rows(report_path)
-    trading_date = run_context["started_at"].strftime("%Y-%m-%d")
-    total, buys, sells, orders_placed = counts
-    text = [
-        title,
-        f"Trading date: {trading_date}",
-        f"Stop reason: {reason}",
-        f"Trade signals: {total} (buys: {buys}, sells: {sells}, orders placed: {orders_placed})",
-        "",
-        "Trade details:",
-        _trade_rows_text(trade_rows),
-    ]
-    html_trade_table = "<h3>Trade details</h3>" + _trade_rows_html(trade_rows)
-    if not outcomes:
-        text.append("No completed live or paper CE/PE trade outcomes were recorded.")
-        html_body = (
-            f"<html><body><h2>{html.escape(title)}</h2>"
-            f"<p>Trading date: {html.escape(trading_date)}<br>"
-            f"Stop reason: {html.escape(str(reason))}<br>"
-            f"Trade signals: {total} (buys: {buys}, sells: {sells}, "
-            f"orders placed: {orders_placed})</p>"
-            + html_trade_table
-            + "<p>No completed live or paper CE/PE trade outcomes were recorded.</p>"
-            + "</body></html>"
-        )
-        return "\n".join(text), html_body
-
-    winning_trades = sum(row["pnl"] > 0 for row in outcomes)
-    losing_trades = sum(row["pnl"] < 0 for row in outcomes)
-    total_pnl = sum(row["pnl"] for row in outcomes)
-    columns = (
-        "Mode", "Strike", "Buy Price", "Sell Price", "Sell Time",
-        "Quantity", "PnL", "Exit Reason", "Order Placed",
-    )
-    text.extend(("", " | ".join(columns), " | ".join("-" * len(column) for column in columns)))
-    for row in outcomes:
-        text.append(
-            f"{row['mode']} | {row['strike']} | {row['buy_price']:.2f} | "
-            f"{row['sell_price']:.2f} | {row['sell_time']} | {row['quantity']:g} | "
-            f"{row['pnl']:.2f} | {row['exit_reason']} | "
-            f"{'YES' if row['order_placed'] else 'NO'}"
-        )
-    text.extend((
-        "",
-        f"Completed trades: {len(outcomes)}",
-        f"Winning trades: {winning_trades}",
-        f"Losing trades: {losing_trades}",
-        f"Total gross P&L (before charges): {total_pnl:.2f}",
-    ))
-    html_rows = "".join(
-        "<tr>"
-        f"<td>{html.escape(str(row['mode']))}</td>"
-        f"<td>{html.escape(str(row['strike']))}</td>"
-        f"<td>{row['buy_price']:.2f}</td>"
-        f"<td>{row['sell_price']:.2f}</td>"
-        f"<td>{html.escape(str(row['sell_time']))}</td>"
-        f"<td>{row['quantity']:g}</td>"
-        f"<td>{row['pnl']:.2f}</td>"
-        f"<td>{html.escape(str(row['exit_reason']))}</td>"
-        f"<td>{'YES' if row['order_placed'] else 'NO'}</td>"
-        "</tr>"
-        for row in outcomes
-    )
-    html_body = (
-        f"<html><body><h2>{html.escape(title)}</h2>"
-        f"<p>Trading date: {html.escape(trading_date)}<br>"
-        f"Stop reason: {html.escape(str(reason))}</p>"
-        + html_trade_table
-        + "<table border='1' cellpadding='6' cellspacing='0'><thead><tr>"
-        + "".join(f"<th>{html.escape(column)}</th>" for column in columns)
-        + "</tr></thead><tbody>"
-        + html_rows
-        + "</tbody></table>"
-        f"<p>Completed trades: {len(outcomes)}<br>"
-        f"Winning trades: {winning_trades}<br>Losing trades: {losing_trades}<br>"
-        f"<strong>Total gross P&amp;L (before charges): {total_pnl:.2f}</strong></p>"
-        f"<p>Signals: {total} (buys: {buys}, sells: {sells}, "
-        f"orders placed: {orders_placed})</p></body></html>"
-    )
-    return "\n".join(text), html_body
+    summary_lines.append(f"Net PnL: {total_pnl:.2f}")
+    return "\n".join(summary_lines)
 
 
 def email_daily_trade_summary(run_context, reason):
-    """Send one daily summary when a trading script stops."""
+    """Send one daily workbook summary when a trading script stops."""
     email_cfg = CONFIG.get("email_notifications", {})
-    script_config = SCRIPTS_SCHEDULE.get(run_context.get("config_key"), {})
-    if (
-        not email_cfg.get("enabled", False)
-        or not email_cfg.get("send_daily_summary_on_stop", True)
-        or not script_config.get("send_daily_summary_on_stop", True)
-    ):
+    if not email_cfg.get("enabled", False) or not email_cfg.get("send_daily_summary_on_stop", True):
         return
     if run_context.get("daily_summary_email_sent"):
         return
@@ -1536,266 +1034,32 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
-    recipients = email_cfg.get("daily_summary_recipients") or email_cfg.get("to_emails")
-    config_key_upper = str(run_context.get("config_key") or "").upper()
-
-    if config_key_upper in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
-        body, html_body = _320trade_summary_email_content(
-            run_context,
-            reason,
-            report_path,
-            (total, buys, sells, orders_placed),
-            title=f"{run_context['config_key']} completed",
-        )
-        milestone_text, milestone_html = _price_milestone_summary(run_context)
-        send_email_notification(
-            subject,
-            f"{body}\n\n{milestone_text}",
-            html_body=html_body.replace("</body></html>", f"{milestone_html}</body></html>"),
-            recipients=recipients,
-        )
-        return
-
-    compact_summary_scripts = {
-        "NIFTYINTRA", "SENSEXINTRA", "NATGASMINI", "OILMINI", "GOLDMINI",
-    }
-    if config_key_upper not in compact_summary_scripts:
-        milestone_text, milestone_html = _price_milestone_summary(run_context)
-        body = (
-            f"Daily trading summary\n"
-            f"Script: {run_context['config_key']}\n"
-            f"Trading date: {trading_date}\n"
-            f"Stop reason: {reason}\n"
-            f"Trade signals: {total}\n"
-            f"Buy signals: {buys}\n"
-            f"Sell signals: {sells}\n"
-            f"Orders placed: {orders_placed}\n\n"
-            f"{milestone_text}"
-        )
-        trade_rows = _trade_report_rows(report_path)
-        html_body = (
-            f"<html><body><h2>{html.escape(subject)}</h2>"
-            f"<p>{html.escape(body).replace(chr(10), '<br>')}</p>"
-            "<h3>Trade details</h3>"
-            + _trade_rows_html(trade_rows)
-            + milestone_html
-            + "</body></html>"
-        )
-        send_email_notification(
-            subject,
-            body + "\n\nTrade details:\n" + _trade_rows_text(trade_rows),
-            html_body=html_body,
-            recipients=recipients,
-        )
-        return
-
-    summary_text = (
-        f"Daily trading summary\n\n"
-        f"Script: {run_context['config_key']}\n\n"
-        f"Trading date: {trading_date}\n\n"
-        f"Stop reason: {reason}\n\n"
-        f"Trade signals: {total}\n\n"
-        f"Buy signals: {buys}\n\n"
-        f"Sell signals: {sells}\n\n"
-        f"Orders placed: {orders_placed}"
-    )
-    trade_rows = _trade_report_rows(report_path)
-    try:
-        realized_pnl = sum(_completed_trade_outcomes(report_path))
-        today_pnl = f"{realized_pnl:.2f}"
-    except Exception as exc:
-        logger.error(f"[REPORT] Failed to calculate daily P&L for {run_context['config_key']}: {exc}")
-        today_pnl = "Unavailable"
     body = (
-        f"{summary_text}\n\nToday PNL: {today_pnl}\n\n"
-        f"{_trade_rows_text(trade_rows, columns=DAILY_SUMMARY_COLUMNS)}"
-    )
-    html_sections = [
-        f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<p>{html.escape(summary_text).replace(chr(10), '<br>')}<br><br>"
-        f"Today PNL: {html.escape(today_pnl)}</p>"
-        + _trade_rows_html(trade_rows, columns=DAILY_SUMMARY_COLUMNS)
-    ]
-
-    html_sections.append("</body></html>")
-    send_email_notification(
-        subject,
-        body,
-        html_body="".join(html_sections),
-        recipients=recipients,
+        f"Daily trading summary\n"
+        f"Script: {run_context['config_key']}\n"
+        f"Trading date: {trading_date}\n"
+        f"Stop reason: {reason}\n"
+        f"Trade signals: {total}\n"
+        f"Buy signals: {buys}\n"
+        f"Sell signals: {sells}\n"
+        f"Orders placed: {orders_placed}\n"
+        f"Excel report: {report_path.name}"
     )
 
+    if str(run_context.get("config_key") or "").upper() == "320TRADE":
+        extra_summary = _extract_320trade_summary(run_context)
+        if extra_summary:
+            body = f"{body}\n\nExecuted 3:20 CE/PE outcome:\n{extra_summary}"
 
-def _week_trade_date(value):
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
-    except ValueError:
-        return None
-
-
-def _weekly_trade_report_path(week_start, week_end):
-    return WEEKLY_REPORT_DIR / (
-        f"Weekly_{week_start:%Y%m%d}_{week_end:%Y%m%d}.xlsx"
-    )
+    send_email_notification(subject, body, attachment_path=report_path)
 
 
-def _create_weekly_trade_report(week_start, week_end):
-    workbook = Workbook()
-    sheet_names = list(MONTHLY_REPORT_SHEETS.values())
-    for index, sheet_name in enumerate(sheet_names):
-        sheet = workbook.active if index == 0 else workbook.create_sheet()
-        _initialize_trade_report_sheet(workbook, sheet, title=sheet_name)
-
-    month_paths = {
-        _monthly_trade_report_path(datetime.combine(day, dt_time.min).isoformat())
-        for day_offset in range((week_end - week_start).days + 1)
-        for day in [week_start + timedelta(days=day_offset)]
-    }
-    weekly_rows = {sheet_name: [] for sheet_name in sheet_names}
-    for source_path in sorted(month_paths):
-        if not source_path.exists():
-            continue
-        for sheet_name in sheet_names:
-            for row in _trade_report_rows(source_path, sheet_name):
-                trade_date = _week_trade_date(row.get("Time"))
-                if trade_date is not None and week_start <= trade_date <= week_end:
-                    weekly_rows[sheet_name].append(row)
-
-    for sheet_name, rows in weekly_rows.items():
-        rows.sort(key=lambda row: str(row.get("Time") or ""))
-        sheet = workbook[sheet_name]
-        for row in rows:
-            sheet.append(tuple(row.get(column) for column in TRADE_REPORT_COLUMNS) + ("",))
-        sheet.auto_filter.ref = sheet.dimensions
-
-    return workbook, weekly_rows
-
-
-def _weekly_summary_due(now, running_processes):
-    if now.weekday() != DayOfWeek.MONDAY.value:
-        return False
-
-    return not any(
-        config_key.upper() in MONTHLY_REPORT_SHEETS
-        and run_context["process"].poll() is None
-        for config_key, run_context in running_processes.items()
-    )
-
-
-def email_weekly_trade_summary(now=None, running_processes=None):
-    """Email the previous Monday-through-Sunday trade report on Monday."""
-    email_cfg = CONFIG.get("email_notifications", {})
-    if (
-        not email_cfg.get("enabled", False)
-        or not email_cfg.get("send_weekly_summary_on_monday", True)
-    ):
-        return
-
-    now = now or get_ist_time()
-    running_processes = running_processes or {}
-    if not _weekly_summary_due(now, running_processes):
-        return
-
-    week_start = (now - timedelta(days=now.weekday() + 7)).date()
-    week_end = week_start + timedelta(days=6)
-    week_key = week_start.strftime("%Y%m%d")
-    WEEKLY_REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    marker_path = WEEKLY_REPORT_DIR / f"summary_sent_{week_key}.txt"
-    if marker_path.exists():
-        return
-
-    report_path = _weekly_trade_report_path(week_start, week_end)
-    try:
-        workbook, market_rows = _create_weekly_trade_report(week_start, week_end)
-        try:
-            _save_trade_report(workbook, report_path)
-        finally:
-            workbook.close()
-    except Exception as exc:
-        logger.error(f"[REPORT] Failed to prepare weekly summary for {week_key}: {exc}")
-        return
-
-    all_rows = [row for rows in market_rows.values() for row in rows]
-    all_rows.sort(key=lambda row: str(row.get("Time") or ""))
-    buys = sum(str(row.get("Side") or "").upper() == "BUY" for row in all_rows)
-    sells = sum(str(row.get("Side") or "").upper() == "SELL" for row in all_rows)
-    orders_placed = sum(
-        str(row.get("Order Placed") or "").upper() == "YES" for row in all_rows
-    )
-    subject = f"[WEEKLY SUMMARY] {week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}"
-    body = (
-        f"Weekly trade summary for {week_start:%Y-%m-%d} to {week_end:%Y-%m-%d}\n"
-        f"Total signals: {len(all_rows)} | Buy signals: {buys} | "
-        f"Sell signals: {sells} | Orders placed: {orders_placed}\n"
-        "\nTrade details:\n"
-        f"{_trade_rows_text(all_rows)}"
-    )
-    html_body = (
-        f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<p>Total signals: {len(all_rows)} | Buy signals: {buys} | "
-        f"Sell signals: {sells} | Orders placed: {orders_placed}</p>"
-        "<h3>Trade details</h3>"
-        + _trade_rows_html(all_rows)
-        + "</body></html>"
-    )
-
-    if send_email_notification(
-        subject,
-        body,
-        html_body=html_body,
-        recipients=email_cfg.get("weekly_summary_recipients"),
-    ):
-        try:
-            marker_path.write_text(now.isoformat(), encoding="utf-8")
-        except OSError as exc:
-            logger.error(f"[REPORT] Failed to mark weekly summary {week_key} as sent: {exc}")
-
-
-def email_trade_signal(config_key, trade, recipients=None):
-    """Email one trade event with its available execution details."""
-    side = trade.get("Side") or "UNKNOWN"
-    symbol = trade.get("Symbol") or "UNKNOWN"
-    trade_time = _format_email_time(trade.get("Time"))
-    order_placed = str(trade.get("Order Placed") or "").upper()
-    is_paper = order_placed != "YES"
-    if str(config_key).upper() == "SUPPERWEEKSCAN":
-        subject_prefix = "[SCAN SIGNAL]"
-    else:
-        subject_prefix = "[PAPER TRADE]" if is_paper else "[LIVE TRADE]"
-    script_name = trade.get("Script") or config_key
-    option_side = _option_side(symbol)
-    strike = trade.get("Strike") or _option_strike(symbol)
-    if str(strike).upper() in {"0", "NA"}:
-        strike = _option_strike(symbol)
-    subject = f"{subject_prefix} {script_name} {side} {option_side} {strike} at {trade_time}"
-    entry_price = trade.get("Buy Price") or (
-        trade.get("Price") if side.upper() == "BUY" else "N/A"
-    )
-    price_label = "Buy price" if side.upper() == "BUY" else "Sell price"
-    price_value = (
-        trade.get("Buy Price") or trade.get("Price")
-        if side.upper() == "BUY"
-        else trade.get("Sell Price") or trade.get("Price")
-    )
-    real_order = {"YES": "Yes", "NO": "No"}.get(order_placed, "N/A")
-    details = [
-        ("Script name", script_name),
-        ("Time", trade_time),
-        ("Side", option_side),
-        ("Strike", strike),
-        ("Entry", entry_price or "N/A"),
-        ("Signal", side.upper()),
-        (price_label, price_value or "N/A"),
-        ("Quantity", trade.get("Qty") or "N/A"),
-        ("Real order", real_order),
-    ]
-    if side.upper() == "SELL":
-        details.extend((
-            ("MA price recorded", trade.get("Highest Price Observed") or "N/A"),
-            ("PNL", trade.get("PnL") or "N/A"),
-        ))
-    body, html_body = _signal_email_content(subject, details, bold_labels={"Signal"})
-    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
+def email_trade_signal(config_key, trade, report_path=None):
+    """Email one trade signal in a standard format used by every script."""
+    _ = config_key
+    subject = _build_trade_email_subject(trade)
+    body, html_body = _build_trade_email_content(trade)
+    send_email_notification(subject, body, attachment_path=report_path, html_body=html_body)
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -1803,176 +1067,19 @@ def process_trade_signal(config_key, output_line, script_config=None):
     trade = parse_trade_signal(output_line)
     if trade is None:
         return
-    is_new = True
     try:
-        _, is_new = append_trade_to_report(config_key, trade)
+        report_path, is_new = append_trade_to_report(config_key, trade)
     except Exception as exc:
         logger.error(f"[REPORT] Failed to record trade signal for {config_key}: {exc}")
-    try:
-        append_trade_to_monthly_report(config_key, trade)
-    except Exception as exc:
-        logger.error(f"[REPORT] Failed to record monthly trade signal for {config_key}: {exc}")
+        return
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
-    order_status_follows_signal = (
-        config_key.upper() in ORDER_STATUS_AFTER_SIGNAL
-        and trade["Side"] == "BUY"
-    )
-    is_weekly_scan = config_key.upper() == "SUPPERWEEKSCAN"
-    if (
-        is_new
-        and send_on_signals
-        and script_emails_enabled
-        and not order_status_follows_signal
-        and not is_weekly_scan
-        and not (
-            config_key.upper() in TRADE_RESULT_EMAIL_SCRIPTS
-            and trade["Side"] == "SELL"
-        )
-    ):
-        recipients = _signal_email_recipients()
-        email_trade_signal(config_key, trade, recipients=recipients)
-
-
-def _signal_email_recipients():
-    email_cfg = CONFIG.get("email_notifications", {})
-    return email_cfg.get("signal_recipients") or email_cfg.get("to_emails")
-
-
-def _scan_report_recipients():
-    email_cfg = CONFIG.get("email_notifications", {})
-    return email_cfg.get("scan_report_recipients") or email_cfg.get("to_emails")
-
-
-def _create_scan_report_xlsx(period, generated_date, signals):
-    report_path = (
-        RUN_LOG_DIR
-        / "scan_reports"
-        / f"{period}_scan_{generated_date:%Y%m%d}.xlsx"
-    )
-    workbook = Workbook()
-    try:
-        sheet = workbook.active
-        sheet.title = "Scan Results"
-        columns = ("Stock Name", "Price", "ST Value", "Signal", "Generated Date")
-        sheet.append(columns)
-        for cell in sheet[1]:
-            cell.font = Font(bold=True)
-        for index, width in enumerate((20, 14, 14, 14, 18), start=1):
-            sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
-        sheet.freeze_panes = "A2"
-
-        for signal in signals:
-            sheet.append((
-                signal["symbol"],
-                signal["price"],
-                signal["supertrend"],
-                signal["side"],
-                generated_date,
-            ))
-            sheet.cell(row=sheet.max_row, column=5).number_format = "yyyy-mm-dd"
-
-        _save_trade_report(workbook, report_path)
-    finally:
-        workbook.close()
-    return report_path
-
-
-def _signal_emails_enabled(script_config):
-    return (
-        CONFIG.get("email_notifications", {}).get("send_on_signals", False)
-        and (not script_config or script_config.get("send_signal_emails", True))
-    )
-
-
-def _format_email_time(value):
-    value = str(value or "N/A")
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%H:%M")
-    except ValueError:
-        match = re.search(r"\b\d{1,2}:\d{2}\b", value)
-        return match.group(0) if match else value
-
-
-def _option_side(symbol):
-    match = re.search(r"(CE|PE)$", str(symbol or "").upper())
-    return match.group(1) if match else "N/A"
-
-
-def _option_strike(symbol):
-    match = re.search(r"-(\d+)-(?:CE|PE)$", str(symbol or ""), re.IGNORECASE)
-    return match.group(1) if match else "N/A"
-
-
-def _signal_email_content(subject, details, bold_labels=()):
-    body = "\n".join(f"{label}: {value}" for label, value in details)
-    rows = []
-    for label, value in details:
-        value_html = html.escape(str(value))
-        if label in bold_labels:
-            value_html = f"<strong>{value_html}</strong>"
-        rows.append(
-            "<tr>"
-            f"<th align='left'>{html.escape(label)}</th>"
-            f"<td>{value_html}</td>"
-            "</tr>"
-        )
-    html_body = (
-        f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<table>{''.join(rows)}</table></body></html>"
-    )
-    return body, html_body
-
-
-def process_generated_signal(config_key, output_line, script_config=None):
-    """Email raw strategy setup signals as they are generated."""
-    signal = parse_generated_signal(output_line)
-    if signal is None or not _signal_emails_enabled(script_config):
-        return
-
-    subject = (
-        f"[SIGNAL GENERATED] {config_key} {signal['Side']} {signal['Symbol']}"
-    )
-    body = (
-        f"Signal generated\n\n"
-        f"Script: {config_key}\n"
-        f"Side: {signal['Side']}\n"
-        f"Symbol: {signal['Symbol']}\n\n"
-        f"Script output:\n{signal['Output']}"
-    )
-    send_email_notification(
-        subject,
-        body,
-        recipients=_signal_email_recipients(),
-    )
-
-
-def process_order_confirmation(config_key, output_line, script_config=None):
-    """Email confirmed live orders and paper entries."""
-    confirmation = parse_order_confirmation(output_line)
-    if (
-        confirmation is None
-        or config_key.upper() in ORDER_STATUS_FROM_TRADE_SIGNAL
-        or not _signal_emails_enabled(script_config)
-    ):
-        return
-
-    trade = {
-        "Script": config_key,
-        "Side": confirmation["Side"],
-        "Time": confirmation["Time"],
-        "Symbol": confirmation["Symbol"],
-        "Strike": "",
-        "Price": confirmation["Price"],
-        "Qty": confirmation["Qty"],
-        "Order Placed": "NO" if confirmation["Event"] == "PAPER BUY TRACKED" else "YES",
-    }
-    trade["Strike"] = _option_strike(confirmation["Symbol"])
-    email_trade_signal(config_key, trade, recipients=_signal_email_recipients())
+    if is_new and send_on_signals and script_emails_enabled:
+        email_trade_signal(config_key, trade, report_path)
 
 
 def process_price_milestone(config_key, output_line, script_config=None):
-    """Email a price milestone emitted by a configured strategy."""
+    """Email one price milestone while suppressing duplicates for the same symbol+timestamp."""
     milestone = parse_price_milestone(output_line)
     if milestone is None:
         return
@@ -1982,214 +1089,23 @@ def process_price_milestone(config_key, output_line, script_config=None):
     if not send_on_signals or not script_emails_enabled:
         return
 
-    basis = "Index" if milestone["Basis"].upper() == "INDEX" else "Option"
-    script_name = milestone.get("Script") or config_key
-    option_side = milestone["Side"].upper()
-    strike = milestone.get("Strike") or _option_strike(milestone["Symbol"])
-    if str(strike).upper() in {"0", "NA"}:
-        strike = _option_strike(milestone["Symbol"])
-    trade_time = _format_email_time(milestone["Time"])
-    subject = (
-        f"[PRICE MOVE] {script_name} {basis} {milestone['Move']} points "
-        f"({milestone['Direction']}) - BUY {option_side} {strike} at {trade_time}"
+    dedupe_key = (
+        str(milestone.get("Script") or config_key).upper(),
+        str(milestone.get("Symbol") or ""),
+        str(milestone.get("Time") or ""),
     )
-    details = [
-        ("Script name", script_name),
-        ("Time", trade_time),
-        ("Side", option_side),
-        ("Strike", strike),
-        ("Entry", milestone["Entry"]),
-        ("Current price", milestone["Price"]),
-        ("Signal", "BUY"),
-        ("Quantity", milestone.get("Qty") or "N/A"),
-        (
-            "Real order",
-            {"YES": "Yes", "NO": "No"}.get(
-                str(milestone.get("OrderPlaced") or "").upper(), "N/A"
-            ),
-        ),
-        ("Price move", f"{milestone['Move']} points"),
-    ]
-    body, html_body = _signal_email_content(
-        subject, details, bold_labels={"Signal", "Price move"}
-    )
-    recipients = _signal_email_recipients()
-    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
-
-
-def parse_trade_result(line):
-    """Parse a confirmed trade result containing realized execution details."""
-    if "[TRADE RESULT]" not in line:
-        return None
-
-    fields = {}
-    for match in TRADE_SIGNAL_FIELD_PATTERN.finditer(line):
-        start = match.end()
-        next_match = TRADE_SIGNAL_FIELD_PATTERN.search(line, start)
-        end = next_match.start() if next_match else len(line)
-        fields[match.group(1)] = line[start:end].strip()
-
-    required_fields = ("Script", "Side", "Symbol", "Strike", "BuyAt", "SellAt", "PnL")
-    if any(not fields.get(field) for field in required_fields):
-        return None
-    if fields["Side"].upper() != "SELL":
-        return None
-
-    return fields
-
-
-def process_trade_result(config_key, output_line, script_config=None):
-    """Email realized sell details after a trade result has been confirmed."""
-    result = parse_trade_result(output_line)
-    if (
-        result is None
-        or str(config_key).upper() not in TRADE_RESULT_EMAIL_SCRIPTS
-        or result["Script"].upper() != str(config_key).upper()
-    ):
+    if PRICE_MILESTONE_EMAIL_GUARD.get(dedupe_key):
         return
+    PRICE_MILESTONE_EMAIL_GUARD[dedupe_key] = True
 
-    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
-    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
-    if not send_on_signals or not script_emails_enabled:
-        return
+    # Prevent unbounded growth for very long scheduler uptime.
+    if len(PRICE_MILESTONE_EMAIL_GUARD) > 5000:
+        for old_key in list(PRICE_MILESTONE_EMAIL_GUARD.keys())[:1000]:
+            PRICE_MILESTONE_EMAIL_GUARD.pop(old_key, None)
 
-    trade = {
-        "Script": result["Script"],
-        "Side": result["Side"],
-        "Time": result.get("Time", ""),
-        "Symbol": result["Symbol"],
-        "Strike": result["Strike"],
-        "Price": result["SellAt"],
-        "Buy Price": result["BuyAt"],
-        "Sell Price": result["SellAt"],
-        "Qty": result.get("Qty", ""),
-        "PnL": result["PnL"],
-        "Highest Price Observed": result.get("HighestPrice", ""),
-        "Order Placed": result.get("OrderPlaced", ""),
-    }
-    email_trade_signal(config_key, trade, recipients=_signal_email_recipients())
-
-
-def process_scan_results(config_key, output_line, script_config=None):
-    """Email one detailed BUY/SELL report from one stock scanner run."""
-    prefix = "[SCAN RESULTS] "
-    if not output_line.startswith(prefix):
-        return
-
-    fields = {}
-    for field in output_line[len(prefix):].split():
-        name, separator, value = field.partition("=")
-        if separator:
-            fields[name] = value
-    if fields.get("Script", "").upper() != str(config_key).upper():
-        logger.error(f"[EMAIL] Ignoring malformed scan results for {config_key}")
-        return
-
-    send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
-    script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
-    if not send_on_signals or not script_emails_enabled:
-        return
-
-    try:
-        results = json.loads(fields["Results"])
-    except (KeyError, json.JSONDecodeError) as exc:
-        logger.error(f"[EMAIL] Invalid scan results from {config_key}: {exc}")
-        return
-    if not isinstance(results, list):
-        logger.error(f"[EMAIL] Scan results from {config_key} must be a list")
-        return
-
-    required_fields = {"symbol", "side", "date", "price", "supertrend"}
-    signals = []
-    for result in results:
-        if (
-            not isinstance(result, dict)
-            or not required_fields.issubset(result)
-            or str(result["side"]).upper() not in {"BUY", "SELL"}
-        ):
-            logger.error(f"[EMAIL] Invalid scan result from {config_key}: {result!r}")
-            return
-        try:
-            price = float(result["price"])
-            supertrend = float(result["supertrend"])
-        except (TypeError, ValueError):
-            logger.error(f"[EMAIL] Invalid scan prices from {config_key}: {result!r}")
-            return
-        signals.append(
-            {
-                "symbol": str(result["symbol"]),
-                "side": str(result["side"]).upper(),
-                "date": str(result["date"]),
-                "price": price,
-                "supertrend": supertrend,
-            }
-        )
-
-    try:
-        generated_date = datetime.strptime(fields["ScanDate"], "%Y-%m-%d").date()
-    except (KeyError, ValueError) as exc:
-        logger.error(f"[EMAIL] Invalid scan date from {config_key}: {exc}")
-        return
-    period = fields.get("Period", "daily").strip().lower()
-    if period not in {"daily", "weekly"}:
-        logger.error(f"[EMAIL] Unsupported scan period from {config_key}: {period}")
-        return
-    period_title = period.capitalize()
-    scan_date = generated_date.isoformat()
-    subject = f"[{period.upper()} SCAN REPORT] {config_key} {scan_date}"
-    buy_signals = [signal for signal in signals if signal["side"] == "BUY"]
-    if buy_signals:
-        text_rows = [
-            f"{signal['symbol']:<16} {signal['side']:<6} {signal['date']:<12} "
-            f"{float(signal['price']):>12.2f} {float(signal['supertrend']):>12.2f}"
-            for signal in buy_signals
-        ]
-        stock_list = (
-            f"{'Symbol':<16} {'Signal':<6} {'Date':<12} {'Price':>12} {'Supertrend':>12}\n"
-            + "\n".join(text_rows)
-        )
-        html_rows = "".join(
-            "<tr>"
-            f"<td>{html.escape(signal['symbol'])}</td>"
-            f"<td>{html.escape(signal['side'])}</td>"
-            f"<td>{html.escape(signal['date'])}</td>"
-            f"<td align='right'>{float(signal['price']):.2f}</td>"
-            f"<td align='right'>{float(signal['supertrend']):.2f}</td>"
-            "</tr>"
-            for signal in buy_signals
-        )
-        html_table = (
-            "<table border='1' cellpadding='5' cellspacing='0'>"
-            "<thead><tr><th>Symbol</th><th>Signal</th><th>Date</th>"
-            "<th>Price</th><th>Supertrend</th></tr></thead>"
-            f"<tbody>{html_rows}</tbody></table>"
-        )
-    else:
-        stock_list = f"No stocks generated a BUY signal in the {period.lower()} scan."
-        html_table = f"<p>{html.escape(stock_list)}</p>"
-    body = (
-        f"{period_title} Supertrend BUY scan report for {scan_date}\n\n"
-        f"BUY signals ({len(buy_signals)}):\n{stock_list}\n\n"
-        "This is a scanner report; no orders were placed."
-    )
-    html_body = (
-        f"<html><body><h2>{html.escape(subject)}</h2>"
-        f"<p>BUY signals ({len(buy_signals)}):</p>{html_table}"
-        "<p>This is a scanner report; no orders were placed.</p></body></html>"
-    )
-    recipients = _scan_report_recipients()
-    try:
-        attachment_path = _create_scan_report_xlsx(period, generated_date, signals)
-    except Exception as exc:
-        logger.error(f"[EMAIL] Failed to create {period} scan report workbook for {config_key}: {exc}")
-        return
-    send_email_notification(
-        subject,
-        body,
-        attachment_path=attachment_path,
-        html_body=html_body,
-        recipients=recipients,
-    )
+    subject = _build_price_milestone_subject(milestone)
+    body, html_body = _build_price_milestone_content(milestone)
+    send_email_notification(subject, body, html_body=html_body)
 
 
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
@@ -2206,30 +1122,19 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     logger.info(f"[{config_key}] {output}")
                     script_log_handle.write(f"{output}\n")
                     script_log_handle.flush()
-                    record_price_milestone(run_context, output)
-                    process_generated_signal(config_key, output, script_config)
-                    process_order_confirmation(config_key, output, script_config)
                     process_trade_signal(config_key, output, script_config)
-                    process_trade_result(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
                     process_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
-        email_script_failure(
-            config_key,
-            "output_reader_failure",
-            f"Could not capture script output ({type(e).__name__}).",
-        )
 
 
 def launch_script(script_name, config_key):
     """Launch a script in a separate process"""
     script_path = Path(__file__).parent / script_name
-    script_config = SCRIPTS_SCHEDULE.get(config_key, {})
     
     if not script_path.exists():
         logger.error(f"[ERROR] Script not found: {script_path}")
-        email_script_failure(config_key, "launch_failure", "Configured script file was not found.")
         return None
     
     try:
@@ -2243,6 +1148,7 @@ def launch_script(script_name, config_key):
         
         # Build command with dry-run flag if enabled
         cmd = [sys.executable, str(script_path)]
+        
         if CONFIG.get("dry_run"):
             cmd.append("--dry-run")
         
@@ -2267,13 +1173,12 @@ def launch_script(script_name, config_key):
             "started_at": started_at,
             "run_log_path": run_log_path,
             "recent_output": deque(maxlen=25),
-            "last_price_milestone": None,
-            "highest_milestone_prices": {},
             "failure_signature": None,
             "failure_summary": None,
         }
         
         # Start output capture in a separate thread
+        script_config = SCRIPTS_SCHEDULE.get(config_key, {})
         output_thread = threading.Thread(
             target=capture_script_output,
             args=(config_key, process, run_log_path, run_context, script_config),
@@ -2286,11 +1191,6 @@ def launch_script(script_name, config_key):
     
     except Exception as e:
         logger.error(f"[ERROR] Failed to launch {script_name}: {e}")
-        email_script_failure(
-            config_key,
-            "launch_failure",
-            f"Could not launch the script ({type(e).__name__}).",
-        )
         return None
 
 
@@ -2300,7 +1200,7 @@ def log_startup_status():
     cleanup_old_logs()
     logger.info("=" * 80)
     logger.info(f"[SCHEDULER] Started at {now.strftime('%Y-%m-%d %H:%M:%S IST')}")
-    logger.info("[MODE] PAPER ONLY (trade execution is disabled in strategy configuration)")
+    logger.info(f"[MODE] {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
     logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} configured")
     logger.info(f"[LOG_RETENTION] {CONFIG.get('log_retention_days', 2)} day(s)")
     email_enabled = CONFIG.get("email_notifications", {}).get("enabled", False)
@@ -2378,14 +1278,9 @@ def scheduler_loop():
                     blocked_failures.pop(config_key, None)
             
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
-            email_weekly_trade_summary(now=get_ist_time(), running_processes=running_processes)
             
             # Sleep before next check
-            sleep_seconds = float(CONFIG["check_interval_seconds"])
-            next_start_delay = seconds_until_next_script_start()
-            if next_start_delay is not None:
-                sleep_seconds = min(sleep_seconds, next_start_delay)
-            monitored_sleep(sleep_seconds, running_processes, script_launch_logged, blocked_failures)
+            monitored_sleep(CONFIG["check_interval_seconds"], running_processes, script_launch_logged, blocked_failures)
     
     except KeyboardInterrupt:
         logger.info("[STOP] Scheduler stopped by user")
@@ -2419,7 +1314,6 @@ def print_schedule():
         end = script_config.get("run_time_end", "N/A")
         delay = script_config.get("api_delay_seconds", 0)
         days_of_month = script_config.get("run_days_of_month")
-        months = script_config.get("run_months")
         
         print(f"\n{config_key:20} {status}")
         print(f"  Script:  {script_config.get('script_name')}")
@@ -2433,8 +1327,6 @@ def print_schedule():
                 print(f"  Of Month: Days {min(days_of_month)}-{max(days_of_month)}")
             else:
                 print(f"  Of Month: Every day")
-            if months is not None:
-                print(f"  Months:  {', '.join(str(month) for month in months)}")
         else:
             print(f"  Of Month: Every day")
         
@@ -2443,7 +1335,7 @@ def print_schedule():
             print(f"  Delay:   {delay} seconds (before API call)")
     
     print("\n" + "=" * 80)
-    print("Mode: PAPER ONLY (trade execution is disabled in strategy configuration)")
+    print(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
     email_cfg = CONFIG.get("email_notifications", {})
     print(f"Email: {'ENABLED' if email_cfg.get('enabled') else 'DISABLED'}")
     print("=" * 80 + "\n")

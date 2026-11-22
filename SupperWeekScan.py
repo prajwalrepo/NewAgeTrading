@@ -20,23 +20,30 @@ from growwapi import GrowwAPI
 
 
 def load_groww_credentials():
-    """Load Groww creds from environment or a local .env file."""
+    """Load Groww credentials from environment or the project .env file."""
     env_file = Path(__file__).resolve().with_name(".env")
     if env_file.exists():
         try:
-            for line in env_file.read_text(encoding="utf-8").splitlines():
+            for line in env_file.read_text(encoding="utf-8-sig").splitlines():
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
                 key, value = line.split("=", 1)
                 key = key.strip()
                 value = value.strip().strip('"').strip("'")
-                os.environ.setdefault(key, value)
-        except Exception:
-            pass
+                if key in {"GROWW_API_KEY", "GROWW_API_SECRET"}:
+                    # A value in .env must replace an empty shell variable.
+                    if not os.getenv(key, "").strip():
+                        os.environ[key] = value
+        except OSError as exc:
+            print(f"[ERROR] Could not read .env file at {env_file}: {exc}")
 
     api_key = os.getenv("GROWW_API_KEY", "").strip()
     api_secret = os.getenv("GROWW_API_SECRET", "").strip()
+    if not api_key or not api_secret:
+        print(f"[DEBUG] Credential lookup: env file={env_file} | key={'set' if api_key else 'missing'} | secret={'set' if api_secret else 'missing'}")
     return api_key, api_secret
 
 

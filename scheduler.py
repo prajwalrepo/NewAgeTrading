@@ -130,12 +130,53 @@ SCRIPTS_SCHEDULE = {
     "SupperWeekScan": {
         "script_name": "SupperWeekScan.py",
         "description": "Weekly stock scanner using supertrend logic",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.FRIDAY],
         "run_time_start": "23:00",
         "run_time_end": "23:05",
         "api_delay_seconds": 0,
         "send_signal_emails": True,
+    },
+
+    "SupperDayScan": {
+        "script_name": "SupperDayScan.py",
+        "description": "Daily stock scanner using Groww daily candles",
+        "enabled": False,
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                     DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY,
+                     DayOfWeek.SUNDAY],
+        "run_time_start": "23:30",
+        "run_time_end": "23:59",
+        "run_once_per_window": True,
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "send_daily_summary_on_stop": False,
+    },
+
+    "yfday": {
+        "script_name": "yfday.py",
+        "description": "Daily Yahoo Finance Supertrend scanner",
+        "enabled": True,
+        "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
+        "run_time_start": "23:59",
+        "run_time_end": "23:59",
+        "run_once_per_window": True,
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "send_daily_summary_on_stop": False,
+    },
+
+    "yfweek": {
+        "script_name": "yfweek.py",
+        "description": "Weekly Yahoo Finance Supertrend scanner",
+        "enabled": True,
+        "run_days": [DayOfWeek.FRIDAY],
+        "run_time_start": "23:59",
+        "run_time_end": "23:59",
+        "run_once_per_window": True,
+        "api_delay_seconds": 0,
+        "send_signal_emails": True,
+        "send_daily_summary_on_stop": False,
     },
 }
 
@@ -1127,6 +1168,115 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     process_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
+
+
+def _is_scan_script(config_key, script_name=""):
+    """Identify scan scripts that finish normally with exit code 0."""
+    text = f"{config_key} {script_name}".upper()
+    return "SCAN" in text or "YFDAY" in text or "YFWEEK" in text
+
+
+def process_scan_results(script_name, output, script_config=None):
+    """Parse scan output, create an Excel BUY/SELL report, and email it."""
+    if "[SCAN RESULTS]" not in output:
+        return
+
+    script_match = re.search(r"Script=([^\s]+)", output)
+    period_match = re.search(r"Period=([^\s]+)", output)
+    date_match = re.search(r"ScanDate=([^\s]+)", output)
+    json_match = re.search(r"Results=(\[.*\])\s*$", output)
+    if not all((script_match, period_match, date_match, json_match)):
+        logger.warning(f"[{script_name}] Could not parse scanner result line")
+        return
+
+    try:
+        results = json.loads(json_match.group(1))
+        if not isinstance(results, list):
+            raise ValueError("Results must be a JSON list")
+    except Exception as exc:
+        logger.error(f"[{script_name}] Invalid scan result JSON: {exc}")
+        return
+
+    scan_script = script_match.group(1)
+    period = period_match.group(1).lower()
+    scan_date = date_match.group(1)
+    buys = [row for row in results if isinstance(row, dict) and str(row.get("side", "")).upper() == "BUY"]
+    sells = [row for row in results if isinstance(row, dict) and str(row.get("side", "")).upper() == "SELL"]
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "BUY SELL Signals"
+    sheet.append(("Symbol", "Side", "Date", "Price", "Supertrend", "RSI"))
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+    for row in results:
+        if isinstance(row, dict):
+            sheet.append((
+                row.get("symbol", ""),
+                str(row.get("side", "")).upper(),
+                row.get("date", ""),
+                row.get("price", ""),
+                row.get("supertrend", ""),
+                row.get("rsi", ""),  # Add RSI value
+            ))
+
+    for index, width in enumerate((20, 10, 14, 14, 14, 10), start=1):
+        sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+    attachment_path = RUN_LOG_DIR / f"{period}_scan_{scan_script}_{scan_date}.xlsx"
+    workbook.save(attachment_path)
+
+    subject = f"[{period.upper()} SCAN REPORT] {scan_script} {scan_date}"
+    body_lines = [
+        subject,
+        "",
+        f"BUY signals: {len(buys)}",
+        f"SELL signals: {len(sells)}",
+        f"Total signals: {len(results)}",
+    ]
+    for row in buys:
+        body_lines.append(
+            f"BUY | {row.get('symbol', '')} | Date={row.get('date', '')} | "
+            f"Price={row.get('price', '')} | Supertrend={row.get('supertrend', '')} | "
+            f"RSI={row.get('rsi', '')}"
+        )
+    for row in sells:
+        body_lines.append(
+            f"SELL | {row.get('symbol', '')} | Date={row.get('date', '')} | "
+            f"Price={row.get('price', '')} | Supertrend={row.get('supertrend', '')} | "
+            f"RSI={row.get('rsi', '')}"
+        )
+
+    html_rows = "".join(
+        "<tr>"
+        f"<td>{row.get('symbol', '')}</td>"
+        f"<td>{row.get('side', '')}</td>"
+        f"<td>{row.get('date', '')}</td>"
+        f"<td>{row.get('price', '')}</td>"
+        f"<td>{row.get('supertrend', '')}</td>"
+        f"<td>{row.get('rsi', '')}</td>"  # Add RSI value
+        "</tr>"
+        for row in results if isinstance(row, dict)
+    )
+    html_body = (
+        f"<h2>{subject}</h2>"
+        f"<p>BUY signals: {len(buys)} | SELL signals: {len(sells)} | Total: {len(results)}</p>"
+        "<table border='1' cellpadding='5' cellspacing='0'>"
+        "<tr><th>Symbol</th><th>Side</th><th>Date</th><th>Price</th><th>Supertrend</th><th>RSI</th></tr>"
+        f"{html_rows}</table>"
+    )
+
+    recipients = CONFIG.get("email_notifications", {}).get("scan_report_recipients")
+    send_email_notification(
+        subject,
+        "\n".join(body_lines),
+        attachment_path=attachment_path,
+        html_body=html_body,
+        recipients=recipients,
+    )
 
 
 def launch_script(script_name, config_key):

@@ -73,7 +73,7 @@
         "CE": 15,
         "PE": 15
       },
-      "enable_actual_trade": true,
+      "enable_actual_trade": false,
       "atr_period": 10,
       "factor": 3.0,
       "strike_step": 50,
@@ -101,7 +101,7 @@
         "CE": 20,
         "PE": 20
       },
-      "enable_actual_trade": true,
+      "enable_actual_trade": false,
       "atr_period": 10,
       "factor": 3.0,
       "strike_step": 100,
@@ -166,7 +166,7 @@
     "SupperWeekScan": {
       "script_name": "SupperWeekScan.py",
       "description": "Weekly stock scanner using Groww weekly candles, reporting BUY and SELL signals",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["FRIDAY"],
       "run_time_start": "23:00",
       "run_time_end": "23:05",
@@ -177,7 +177,7 @@
     "SupperDayScan": {
       "script_name": "SupperDayScan.py",
       "description": "Daily-candle scanner for Supertrend BUY and SELL signals",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
       "run_time_start": "23:30",
       "run_time_end": "23:59",
@@ -186,6 +186,32 @@
       "send_signal_emails": true,
       "send_daily_summary_on_stop": false,
       "notes": "Runs daily from the 11:30 PM IST scheduled start, at most once per run window, and emails a combined BUY/SELL scan report, including empty scans, to the configured scan report recipient. It does not place orders."
+    },
+    "yfday": {
+      "script_name": "yfday.py",
+      "description": "Yahoo Finance daily-candle Supertrend scanner",
+      "enabled": true,
+      "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+      "run_time_start": "23:59",
+      "run_time_end": "23:59",
+      "run_once_per_window": true,
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "send_daily_summary_on_stop": false,
+      "notes": "Runs at 23:59 IST on weekdays using Yahoo Finance 1-day candles and the standalone yfday 350-stock watchlist. Sends BUY/SELL Excel report including empty scans."
+    },
+    "yfweek": {
+      "script_name": "yfweek.py",
+      "description": "Yahoo Finance weekly-candle Supertrend scanner",
+      "enabled": true,
+      "run_days": ["FRIDAY"],
+      "run_time_start": "23:59",
+      "run_time_end": "23:59",
+      "run_once_per_window": true,
+      "api_delay_seconds": 0,
+      "send_signal_emails": true,
+      "send_daily_summary_on_stop": false,
+      "notes": "Runs Friday at 23:59 IST using Yahoo Finance 1-week candles and the standalone yfweek 2406-stock watchlist. Sends BUY/SELL Excel report including empty scans."
     }
   },
 

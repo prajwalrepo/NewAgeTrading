@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+"""Supertrend stock scanner using Yahoo Finance historical candles.
+
+Runs independently of the Groww-based scanners and uses the full weekly watchlist.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+ATR_PERIOD = 10
+RSI_PERIOD = 14
+RSI_BUY_THRESHOLD = 50.0
+FACTOR = 3.0
+REQUEST_DELAY_SECONDS = 0.25
+DEFAULT_PERIOD = "weekly"
+MAX_HISTORY_DAYS = 180
+
+WATCHLIST = [
+    '20MICRONS', '21STCENMGM', '360ONE', '3BBLACKBIO', '3IINFOLTD', '3MINDIA',
+    '3PLAND', '5PAISA', '63MOONS', 'A2ZINFRA', 'AAATECH', 'AADHARHFC', 'AAKASH',
+    'AAREYDRUGS', 'AARNAV', 'AARON', 'AARTECH', 'AARTIDRUGS', 'AARTIIND',
+    'AARTIPHARM', 'AARTISURF', 'AARVI', 'AASTHA', 'AAVAS', 'ABAN', 'ABANSENT',
+    'ABB', 'ABBOTINDIA', 'ABCAPITAL', 'ABCOTS', 'ABDL', 'ABFRL', 'ABINFRA',
+    'ABLBL', 'ABMINTLLTD', 'ABMKNO', 'ABREL', 'ABSLAMC', 'ACC', 'ACCELYA',
+    'ACCURACY', 'ACE', 'ACEINTEG', 'ACI', 'ACL', 'ACMESOLAR', 'ACSTECH',
+    'ACUTAAS', 'ADANIENSOL', 'ADANIENT', 'ADANIGREEN', 'ADANIPORTS',
+    'ADANIPOWER', 'ADFFOODS', 'ADL', 'ADOR', 'ADROITINFO', 'ADSL', 'ADVAIT',
+    'ADVANCE', 'ADVANIHOTR', 'ADVENTHTL', 'ADVENZYMES', 'AEGISLOG', 'AEGISVOPAK',
+    'AEPL', 'AEQUS', 'AEROENTER', 'AEROFLEX', 'AERONEU', 'AEROPLANE', 'AETHER',
+    'AFCONS', 'AFFLE', 'AFFORDABLE', 'AFIL', 'AFSL', 'AGARIND', 'AGARWALEYE',
+    'AGI', 'AGIIL', 'AGL', 'AGRITECH', 'AGROPHOS', 'AGSTRA', 'AHCL', 'AHLADA',
+    'AHLEAST', 'AHLUCONT', 'AHLWEST', 'AIAENG', 'AIIL', 'AIRAN', 'AIROLAM',
+    'AJANTPHARM', 'AJAXENGG', 'AJMERA', 'AJOONI', 'AKASH', 'AKCAPIT', 'AKG',
+    'AKI', 'AKSHAR', 'AKSHARCHEM', 'AKSHOPTFBR', 'AKUMS', 'ALANKIT',
+    'ALBERTDAVD', 'ALEMBICLTD', 'ALGOQUANT', 'ALICON', 'ALIVUS', 'ALKALI',
+    'ALKEM', 'ALKYLAMINE', 'ALLCARGO', 'ALLDIGI', 'ALLTIME', 'ALMONDZ',
+    'ALOKINDS', 'ALPA', 'ALPHAGEO', 'ALPINETEX', 'AMAGI', 'AMANTA',
+    'AMBALALSA', 'AMBER', 'AMBICAAGAR', 'AMBIKCO', 'AMBUJACEM', 'AMDIND',
+    'AMJLAND', 'AMNPLST', 'AMRUTANJAN', 'ANANDRATHI', 'ANANTRAJ', 'ANDHRAPAP',
+    'ANDHRSUGAR', 'ANGELONE', 'ANIKINDS', 'ANKITMETAL', 'ANMOL', 'ANNAPURNA',
+    'ANSALAPI', 'ANTELOPUS', 'ANTGRAPHIC', 'ANTHEM', 'ANUHPHR', 'ANUP',
+    'ANURAS', 'APARINDS', 'APCL', 'APCOTEXIND', 'APEX', 'APLAPOLLO', 'APLLTD',
+    'APOLLO', 'APOLLOHOSP', 'APOLLOPIPE', 'APOLLOTYRE', 'APOLSINHOT',
+    'APTECHT', 'APTUS', 'AQYLON', 'ARCHIDPLY', 'ARCHIES', 'ARDEE', 'ARE&M',
+    'ARENTERP', 'ARFIN', 'ARIES', 'ARIHANT', 'ARIHANTCAP', 'ARIHANTSUP',
+    'ARIS', 'ARKADE', 'ARMANFIN', 'AROGRANITE', 'ARROWGREEN', 'ARSHIYA',
+    'ARSSBL', 'ARTEMISMED', 'ARTNIRMAN', 'ARVEE', 'ARVIND', 'ARVINDFASN',
+    'ARVSMART', 'ASAHIINDIA', 'ASAHISONG', 'ASAL', 'ASALCBR', 'ASHAPURMIN',
+    'ASHIANA', 'ASHIKAG', 'ASHIMASYN', 'ASHOKA', 'ASHOKAMET', 'ASHOKLEY',
+    'ASIANENE', 'ASIANHOTNR', 'ASIANPAINT', 'ASIANTILES', 'ASKAUTOLTD',
+    'ASMS', 'ASPINWALL', 'ASTAR', 'ASTEC', 'ASTERDM', 'ASTRAL', 'ASTRAMICRO',
+    'ASTRAZEN', 'ASTRON', 'ATALREAL', 'ATAM', 'ATGL', 'ATHERENERG', 'ATL',
+    'ATLANTAA', 'ATLANTAELE', 'ATLASCYCLE', 'ATUL', 'ATULAUTO', 'AUBANK',
+    'AURIONPRO', 'AUROPHARMA', 'AURUM', 'AURUS', 'AUSOMENT', 'AUTOAXLES',
+    'AUTOIND', 'AVADHSUGAR', 'AVALON', 'AVANTEL', 'AVANTIFEED', 'AVG', 'AVL',
+    'AVONMORE', 'AVROIND', 'AVTNPL', 'AWFIS', 'AWHCL', 'AWL', 'AXISBANK',
+    'AXISCADES', 'AXITA', 'AYE', 'AYMSYNTEX', 'AZAD', 'BAFNAPH', 'BAGFILMS',
+    'BAIDFIN', 'BAJAJ-AUTO', 'BAJAJCON', 'BAJAJELEC', 'BAJAJFINSV',
+    'BAJAJHCARE', 'BAJAJHFL', 'BAJAJHIND', 'BAJAJHLDNG', 'BAJAJINDEF',
+    'BAJAJST', 'BAJEL', 'BAJFINANCE', 'BALAJEE', 'BALAJITELE', 'BALAMINES',
+    'BALAXI', 'BALKRISHNA', 'BALKRISIND', 'BALMLAWRIE', 'BALPHARMA',
+    'BALRAMCHIN', 'BALUFORGE', 'BANARBEADS', 'BANARISUG', 'BANCOINDIA',
+    'BANDHANBNK', 'BANG', 'BANKA', 'BANKBARODA', 'BANKINDIA', 'BANSALWIRE',
+    'BANSWRAS', 'BASF', 'BASML', 'BATAINDIA', 'BATLIBOI', 'BAYERCROP', 'BBL',
+    'BBOX', 'BBTC', 'BBTCL', 'BCG', 'BCLIND', 'BCONCEPTS', 'BCPL', 'BDL',
+    'BEARDSELL', 'BECTORFOOD', 'BEDMUTHA', 'BEEKAY', 'BEL', 'BELLACASA',
+    'BELRISE', 'BEML', 'BENGALASM', 'BEPL', 'BERGEPAINT', 'BESTAGRO', 'BETA',
+    'BFINVEST', 'BFUTILITIE', 'BGRENERGY', 'BHAGCHEM', 'BHAGERIA',
+    'BHAGYANGR', 'BHANDARI', 'BHARATCOAL', 'BHARATFORG', 'BHARATGEAR',
+    'BHARATRAS', 'BHARATSE', 'BHARATWIRE', 'BHARTIARTL', 'BHARTIHEXA', 'BHEL',
+    'BI', 'BIGBLOC', 'BIKAJI', 'BIL', 'BILVYAPAR', 'BIMETAL', 'BIOCON',
+    'BIOFILCHEM', 'BIRLACABLE', 'BIRLACORPN', 'BIRLAMONEY', 'BIRLANU',
+    'BIRLAPREC', 'BLACKBUCK', 'BLACKROSE', 'BLAL', 'BLBLIMITED', 'BLIL',
+    'BLISSGVS', 'BLKASHYAP', 'BLS', 'BLSE', 'BLUECHIP', 'BLUECOAST',
+    'BLUEDART', 'BLUEJET', 'BLUESTARCO', 'BLUESTONE', 'BLUSPRING', 'BMWVENTLTD',
+    'BNAGROCHEM', 'BNALTD', 'BODALCHEM', 'BOHRAIND', 'BOMDYEING', 'BONLON',
+    'BORANA', 'BOROLTD', 'BORORENEW', 'BOROSCI', 'BOSCH-HCIL', 'BOSCHLTD',
+    'BPCL', 'BPL', 'BRIGADE', 'BRIGHOTEL', 'BRITANNIA', 'BRNL', 'BROOKS', 'BSE',
+    'BSHSL', 'BSL', 'BSOFT', 'BTML', 'BTTL', 'BUILDPRO', 'BURNPUR', 'BUTTERFLY',
+    'BVCL', 'BYKE', 'CALSOFT', 'CAMLINFINE', 'CAMPUS', 'CAMS', 'CANBK',
+    'CANFINHOME', 'CANHLIFE', 'CANTABIL', 'CAPACITE', 'CAPILLARY', 'CAPITALSFB',
+    'CAPLIPOINT', 'CAPTRUST', 'CARBORUNIV', 'CARERATING', 'CARRARO', 'CARTRADE',
+    'CARYSIL', 'CASTROLIND', 'CCAVENUE', 'CCCL', 'CCHHL', 'CCL', 'CDSL',
+    'CEATLTD', 'CEIGALL', 'CEINSYS', 'CELEBRITY', 'CELLO', 'CEMPRO', 'CENTENKA',
+    'CENTEXT', 'CENTRALBK', 'CENTRUM', 'CENTUM', 'CENTURYPLY', 'CERA',
+    'CEREBRAINT', 'CESC', 'CEWATER', 'CGCL', 'CGPOWER', 'CHALET', 'CHAMBLFERT',
+    'CHEMBOND', 'CHEMBONDCH', 'CHEMCON', 'CHEMFAB', 'CHEMPLASTS', 'CHENNPETRO',
+    'CHEVIOT', 'CHOICEIN', 'CHOLAFIN', 'CHOLAHLDNG', 'CIEINDIA', 'CIFL',
+    'CINELINE', 'CINEVISTA', 'CIPLA', 'CLCIND', 'CLEAN', 'CLEANMAX', 'CLEDUCATE',
+    'CLSEL', 'CMLL', 'CMPDI', 'CMRGREEN', 'CMSINFO', 'CNL', 'COALINDIA',
+    'COASTCORP', 'COCHINSHIP', 'COCKERILL', 'COFFEEDAY', 'COFORGE', 'COHANCE',
+    'COLPAL', 'COMFINTE', 'COMPINFO', 'COMPUSOFT', 'COMSYN', 'CONCOR',
+    'CONCORDBIO', 'CONFIPET', 'CONSOFINVT', 'CONTROLPR', 'CORALFINAC',
+    'CORDELIA', 'CORDSCABLE', 'COROMANDEL', 'CORONA', 'COSMOFIRST', 'COUNCODOS',
+    'CPCAP', 'CPEDU', 'CPL', 'CPPLUS', 'CRAFTSMAN', 'CRAMC', 'CREATIVEYE',
+    'CREDITACC', 'CREST', 'CRISIL', 'CRIZAC', 'CROMPTON', 'CROWN', 'CSBBANK',
+    'CSLFINANCE', 'CSM', 'CTE', 'CUB', 'CUBEXTUB', 'CUMMINSIND', 'CUPID',
+    'CURAA', 'CYBERMEDIA', 'CYBERTECH', 'CYIENT', 'CYIENTDLM', 'DABUR', 'DAICHI',
+    'DALBHARAT', 'DALMIASUG', 'DAMCAPITAL', 'DAMODARIND', 'DANGEE', 'DATAMATICS',
+    'DATAPATTNS', 'DAVANGERE', 'DBCORP', 'DBEIL', 'DBL', 'DBOL', 'DBREALTY',
+    'DBSTOCKBRO', 'DCAL', 'DCBBANK', 'DCI', 'DCM', 'DCMFINSERV', 'DCMNVL',
+    'DCMSHRIRAM', 'DCMSIL', 'DCMSRIND', 'DCW', 'DCXINDIA', 'DDEVPLSTIK',
+    'DECCANCE', 'DECNGOLD', 'DEEDEV', 'DEEPAKFERT', 'DEEPAKNTR', 'DEEPINDS',
+    'DELHIVERY', 'DELPHIFX', 'DELTACORP', 'DELTAMAGNT', 'DEN', 'DENORA',
+    'DENTA', 'DEVIT', 'DEVX', 'DEVYANI', 'DGCONTENT', 'DHAMPURSUG', 'DHANBANK',
+    'DHANUKA', 'DHARAN', 'DHARMAJ', 'DHRUV', 'DHUNINV', 'DIACABS', 'DIAMINESQ',
+    'DIAMONDYD', 'DICIND', 'DIFFNKG', 'DIGIDRIVE', 'DIGISPICE', 'DIGITIDE',
+    'DIGJAMLMTD', 'DISAQ', 'DISHTV', 'DIVGIITTS', 'DIVISLAB', 'DIXON', 'DJML',
+    'DLF', 'DLINKINDIA', 'DMART', 'DMCC', 'DNAMEDIA', 'DODLA', 'DOLATALGO',
+    'DOLLAR', 'DOLPHIN', 'DOMS', 'DONEAR', 'DPABHUSHAN', 'DPSCLTD', 'DPWIRES',
+    'DRAGARWQ', 'DRCSYSTEMS', 'DREAMFOLKS', 'DREDGECORP', 'DRREDDY', 'DSFCL',
+    'DSKULKARNI', 'DSSL', 'DTIL', 'DUCON', 'DVL', 'DWARKESH', 'DYCL',
+    'DYNAMATECH', 'DYNPRO', 'E2E', 'EASEMYTRIP', 'EASTSILK', 'EBGNG', 'ECLERX',
+    'ECOSMOBLTY', 'EDELWEISS', 'EFCIL', 'EICHERMOT', 'EIDPARRY', 'EIEL',
+    'EIFFL', 'EIHAHOTELS', 'EIHOTEL', 'EIMCOELECO', 'EKC', 'ELANTAS', 'ELCIDIN',
+    'ELDEHSG', 'ELECON', 'ELECTCAST', 'ELECTHERM', 'ELGIEQUIP', 'ELGIRUBCO',
+    'ELIN', 'ELITECON', 'ELLEN', 'ELPROINTL', 'EMAMILTD', 'EMAMIPAP',
+    'EMAMIREAL', 'EMBDL', 'EMCURE', 'EMIL', 'EMKAY', 'EMMBI', 'EMMVEE',
+    'EMPOWER', 'EMSLIMITED', 'EMUDHRA', 'ENDURANCE', 'ENERGYDEV', 'ENGINERSIN',
+    'ENIL', 'ENRIN', 'ENTERO', 'EPACK', 'EPACKPEB', 'EPIGRAL', 'EPL', 'EQUIPPP',
+    'EQUITASBNK', 'ERIS', 'ESABINDIA', 'ESAFSFB', 'ESCORTS', 'ESSARSHPNG',
+    'ESSENTIA', 'ESTER', 'ETERNAL', 'ETHOSLTD', 'EUREKAFORB', 'EUROBOND',
+    'EUROPRATIK', 'EUROTEXIND', 'EVEREADY', 'EVERESTIND', 'EXCELINDUS',
+    'EXCELSOFT', 'EXICOM', 'EXIDEIND', 'EXPLEOSOL', 'EXXARO', 'FABTECH', 'FACT',
+    'FAIRCHEMOR', 'FAZE3Q', 'FCL', 'FCSSOFT', 'FDC', 'FEDDERSHOL', 'FEDERALBNK',
+    'FEDFINA', 'FEL', 'FELDVR', 'FERMENTA', 'FIBERWEB', 'FIEMIND', 'FILATEX',
+    'FILATFASH', 'FINCABLES', 'FINEORG', 'FINKURVE', 'FINOPB', 'FINPIPE',
+    'FIRSTCRY', 'FISCHER', 'FIVESTAR', 'FLAIR', 'FLEXITUFF', 'FLFL', 'FLUOROCHEM',
+    'FMGOETZE', 'FMNL', 'FOCUS', 'FOODSIN', 'FORCEMOT', 'FORTIS', 'FOSECOIND',
+    'FRACTAL', 'FRONTSP', 'FSL', 'FUSION', 'GABRIEL', 'GAEL', 'GAIL', 'GALAPREC',
+    'GALAXYSURF', 'GALLANTT', 'GANDHAR', 'GANDHITUBE', 'GANECOS', 'GANESHBE',
+    'GANESHCP', 'GANESHHOU', 'GANGAFORGE', 'GANGESSECU', 'GARFIBRES', 'GARUDA',
+    'GATECH', 'GATECHDVR', 'GATEWAY', 'GAUDIUMIVF', 'GAYAHWS', 'GAYAPROJ',
+    'GCSL', 'GEECEE', 'GEEKAYWIRE', 'GEMAROMA', 'GENCON', 'GENESYS', 'GENESYS-RE',
+    'GENSOL', 'GENUSPAPER', 'GENUSPOWER', 'GEOJITFSL', 'GESHIP', 'GFLLIMITED',
+    'GHCL', 'GHCLTEXTIL', 'GICHSGFIN', 'GICL', 'GICRE', 'GILLANDERS', 'GILLETTE',
+    'GINNIFILA', 'GIPCL', 'GKENERGY', 'GKSL', 'GKWLIMITED', 'GLAND', 'GLAXO',
+    'GLENMARK', 'GLFL', 'GLOBAL', 'GLOBALE', 'GLOBALVECT', 'GLOBE', 'GLOBECIVIL',
+    'GLOBUSSPR', 'GLOSTERLTD', 'GLOTTIS', 'GMBREW', 'GMDCLTD', 'GMMPFAUDLR',
+    'GMRAIRPORT', 'GMRP&UI', 'GNA', 'GNFC', 'GNRL', 'GOACARBON', 'GOCLCORP',
+    'GOCOLORS', 'GODAVARIB', 'GODFRYPHLP', 'GODIGIT', 'GODREJAGRO', 'GODREJCP',
+    'GODREJIND', 'GODREJPROP', 'GOKEX', 'GOKUL', 'GOKULAGRO', 'GOLDENTOBC',
+    'GOLDIAM', 'GOLDTECH', 'GOODLUCK', 'GOODYEAR', 'GOPAL', 'GOYALALUM', 'GPIL',
+    'GPPL', 'GPTHEALTH', 'GPTINFRA', 'GRADIENTE', 'GRANDOAK', 'GRANULES',
+    'GRAPHITE', 'GRASIM', 'GRAUWEIL', 'GRAVISSHO', 'GRAVITA', 'GREAVESCOT',
+    'GREENLAM', 'GREENPANEL', 'GREENPLY', 'GREENPOWER', 'GRINDWELL', 'GRINFRA',
+    'GRMOVER', 'GROBTEA', 'GROWW', 'GRPLTD', 'GRSE', 'GRWRHITECH', 'GSFC',
+    'GSLSU', 'GSPCROP', 'GSS', 'GTECJAINX', 'GTL', 'GTLINFRA', 'GTPL',
+    'GUFICBIO', 'GUJALKALI', 'GUJAPOLLO', 'GUJENERGY', 'GUJRAFFIA', 'GUJTHEM',
+    'GULFOILLUB', 'GULFPETRO', 'GULPOLY', 'GVKPIL', 'GVPIL', 'GVPTECH', 'GVT&D',
+    'GYFTR', 'HAL', 'HALDER', 'HALDYNGL', 'HALEOSLABS', 'HAPPSTMNDS',
+    'HAPPYFORGE', 'HARDWYN', 'HARIOMPIPE', 'HARRMALAYA', 'HARSHA', 'HATHWAY',
+    'HATSUN', 'HAVELLS', 'HAVISHA', 'HAWKINCOOK', 'HBESD', 'HBLENGINE', 'HBSL',
+    'HCC', 'HCG', 'HCL-INSYS', 'HCLTECH', 'HDBFS', 'HDFCAMC', 'HDFCBANK',
+    'HDFCLIFE', 'HDIL', 'HEADSUP', 'HEALTHX', 'HECPROJECT', 'HEG', 'HEIDELBERG',
+    'HEMIPROP', 'HERANBA', 'HERITGFOOD', 'HEROMOTOCO', 'HESTERBIO', 'HEXAGON',
+    'HEXATRADEX', 'HEXT', 'HFCL', 'HGINFRA', 'HGM', 'HGS', 'HIKAL', 'HILINFRA',
+    'HILTON', 'HIMATSEIDE', 'HINDALCO', 'HINDCOMPOS', 'HINDCON', 'HINDCOPPER',
+    'HINDOILEXP', 'HINDPETRO', 'HINDUNILVR', 'HINDWAREAP', 'HINDZINC', 'HIRECT',
+    'HISARMETAL', 'HITECH', 'HITECHCORP', 'HITECHGEAR', 'HLEGLAS', 'HLVLTD',
+    'HMAAGRO', 'HMT', 'HMVL', 'HNDFDS', 'HOMEFIRST', 'HONASA', 'HONAUT',
+    'HONDAPOWER', 'HPAL', 'HPIL', 'HPL', 'HSCL', 'HTMEDIA', 'HUBTOWN', 'HUDCO',
+    'HUHTAMAKI', 'HYBRIDFIN', 'HYUNDAI', 'IBULLSLTD', 'ICDSLTD', 'ICEMAKE',
+    'ICICIAMC', 'ICICIBANK', 'ICICIGI', 'ICICIPRULI', 'ICIL', 'ICRA', 'IDBI',
+    'IDEA', 'IDEAFORGE', 'IDFCFIRSTB', 'IEX', 'IFBAGRO', 'IFBIND', 'IFCI',
+    'IFGLEXPOR', 'IGARASHI', 'IGCL', 'IGIL', 'IGL', 'IGPL', 'IIFL', 'IIFLCAPS',
+    'IITL', 'IKIO', 'IKS', 'IL&FSENGG', 'IL&FSTRANS', 'IMAGICAA', 'IMFA',
+    'IMPAL', 'IMPEXFERRO', 'INA', 'INCREDIBLE', 'INDBANK', 'INDGN', 'INDHOTEL',
+    'INDIACEM', 'INDIAGLYCO', 'INDIAMART', 'INDIANB', 'INDIANCARD', 'INDIANHUME',
+    'INDIASHLTR', 'INDIGO', 'INDIGOPNTS', 'INDIQUBE', 'INDNIPPON', 'INDOAMIN',
+    'INDOBORAX', 'INDOCO', 'INDOFARM', 'INDOMIM', 'INDORAMA', 'INDOSTAR',
+    'INDOTECH', 'INDOTHAI', 'INDOUS', 'INDOWIND', 'INDPRUD', 'INDRAMEDCO',
+    'INDSWFTLAB', 'INDTERRAIN', 'INDUSINDBK', 'INDUSTOWER', 'INFOBEAN',
+    'INFOMEDIA', 'INFY', 'INGERRAND', 'INNOVACAP', 'INNOVANA', 'INNOVISION',
+    'INOXGREEN', 'INOXINDIA', 'INOXWIND', 'INSECTICID', 'INSPIRISYS',
+    'INTELLECT', 'INTENTECH', 'INTERARCH', 'INTLCONV', 'INVENTURE', 'INVPRECQ',
+    'IOB', 'IOC', 'IOLCP', 'IONEXCHANG', 'IPCALAB', 'IPL', 'IRB', 'IRCON',
+    'IRCTC', 'IREDA', 'IRFC', 'IRIS', 'IRISDOREME', 'IRMENERGY', 'ISFT', 'ISGEC',
+    'ISHANCH', 'ITC', 'ITCHOTELS', 'ITDC', 'ITI', 'IVALUE', 'IVC', 'IVP', 'IWP',
+    'IXIGO', 'IZMO', 'J&KBANK', 'JAGRAN', 'JAGSNPHARM', 'JAIBALAJI',
+    'JAICORPLTD', 'JAINREC', 'JAIPURKURT', 'JAMNAAUTO', 'JARO', 'JASH',
+    'JAYAGROGN', 'JAYBARMARU', 'JAYKAY', 'JAYNECOIND', 'JAYSREETEA', 'JBMA',
+    'JETFREIGHT', 'JGCHEM', 'JHS', 'JINDALPHOT', 'JINDALPOLY', 'JINDALSAW',
+    'JINDALSTEL', 'JINDRILL', 'JINDWORLD', 'JIOFIN', 'JISLDVREQS', 'JISLJALEQS',
+    'JITFINFRA', 'JKCEMENT', 'JKIL', 'JKIPL', 'JKLAKSHMI', 'JKPAPER', 'JKTYRE',
+    'JLHL', 'JMA', 'JMFINANCIL', 'JNKINDIA', 'JNPR', 'JOCIL', 'JPOLYINVST',
+    'JPPOWER', 'JSFB', 'JSL', 'JSLL', 'JSWCEMENT', 'JSWDULUX', 'JSWENERGY',
+    'JSWHL', 'JSWINFRA', 'JSWSTEEL', 'JTEKTINDIA', 'JTLIND', 'JUBLCPL',
+    'JUBLFOOD', 'JUBLINGREA', 'JUBLPHARMA', 'JUNIPER', 'JUSTDIAL', 'JWL',
+    'JYOTHYLAB', 'JYOTICNC', 'JYOTISTRUC', 'KABRAEXTRU', 'KAJARIACER',
+    'KAKATCEM', 'KALAMANDIR', 'KALPATARU', 'KALYANI', 'KALYANIFRG',
+    'KALYANKJIL', 'KAMAHOLD', 'KAMATHOTEL', 'KAMDHENU', 'KAMOPAINTS',
+    'KANANIIND', 'KANCHI', 'KANORICHEM', 'KANPRPLA', 'KANSAINER', 'KAPSTON',
+    'KARMAENG', 'KARURVYSYA', 'KAUSHALYA', 'KAVDEFENCE', 'KAYA', 'KAYNES',
+    'KCP', 'KCPSUGIND', 'KDDL', 'KEC', 'KECL', 'KEEPLEARN', 'KEI', 'KELLTONTEC',
+    'KENNAMET', 'KERNEX', 'KESORAMIND', 'KEYFINSERV', 'KFINTECH', 'KHADIM',
+    'KHAICHEM', 'KHAITANLTD', 'KHANDSE', 'KICL', 'KILITCH', 'KIMS', 'KINGFA',
+    'KIOCL', 'KIRANVYPAR', 'KIRIINDUS', 'KIRLFER', 'KIRLOSBROS', 'KIRLOSENG',
+    'KIRLOSIND', 'KIRLPNU', 'KISSHT', 'KITEX', 'KKCL', 'KLBRENG-B', 'KMEW',
+    'KMSUGAR', 'KNACK', 'KNAGRI', 'KNRCON', 'KOHINOOR', 'KOKUYOCMLN',
+    'KOLTEPATIL', 'KOPRAN', 'KOTAKBANK', 'KOTARISUG', 'KOTHARIPET',
+    'KOTHARIPRO', 'KOTIC', 'KOTYARK', 'KOVAI', 'KPEL', 'KPIGREEN', 'KPIL',
+    'KPITTECH', 'KPL', 'KPRMILL', 'KRBL', 'KREBSBIO', 'KRIDHANINF', 'KRISHANA',
+    'KRISHIVAL', 'KRISHNADEF', 'KRITI', 'KRITIKA', 'KRITINUT', 'KRN', 'KRONOX',
+    'KROSS', 'KRSNAA', 'KRYSTAL', 'KSB', 'KSCL', 'KSHINTL', 'KSHITIJPOL',
+    'KSL', 'KSOLVES', 'KSR', 'KTKBANK', 'KUANTUM', 'KUSUMGAR', 'KWIL', 'LAGNAM',
+    'LAHOTIOV', 'LAKPRE', 'LAL', 'LALPATHLAB', 'LAMBODHARA', 'LANCORHOL',
+    'LANDMARK', 'LANDSMILL', 'LAOPALA', 'LASA', 'LASERPOWER', 'LATENTVIEW',
+    'LATTEYS', 'LAURUSLABS', 'LAXMICOT', 'LAXMIDENTL', 'LAXMIINDIA',
+    'LCCINFOTEC', 'LCL', 'LEAPIND', 'LEMERITE', 'LEMONTREE', 'LENSKART', 'LEXUS',
+    'LFIC', 'LGBBROSLTD', 'LGEINDIA', 'LGHL', 'LIBAS', 'LIBERTSHOE', 'LICHSGFIN',
+    'LICI', 'LIKHITHA', 'LINC', 'LINCOLN', 'LINDEINDIA', 'LLOYDSENGG',
+    'LLOYDSENT', 'LLOYDSME', 'LMW', 'LODHA', 'LOKESHMACH', 'LORDSCHLO',
+    'LOTUSDEV', 'LOTUSEYE', 'LOVABLE', 'LOYALTEX', 'LPDC', 'LT', 'LTF', 'LTFOODS',
+    'LTM', 'LTTS', 'LUMAXIND', 'LUMAXTECH', 'LUPIN', 'LUXIND', 'LXCHEM',
+    'LYKALABS', 'M&M', 'M&MFIN', 'MAANALU', 'MACPOWER', 'MADHAV', 'MADHAVIPL',
+    'MADHUCON', 'MADRASFERT', 'MAFATIND', 'MAGADSUGAR', 'MAGNUM', 'MAHABANK',
+    'MAHAPEXLTD', 'MAHASTEEL', 'MAHEPC', 'MAHESHWARI', 'MAHLIFE', 'MAHLOG',
+    'MAHSCOOTER', 'MAHSEAMLES', 'MAITHANALL', 'MAJESAUT', 'MALLCOM',
+    'MALUPAPER', 'MAMATA', 'MANAKALUCO', 'MANAKCOAT', 'MANAKSIA', 'MANAKSTEEL',
+    'MANALIPETC', 'MANAPPURAM', 'MANBA', 'MANCREDIT', 'MANGALAM', 'MANGLMCEM',
+    'MANINDS', 'MANINFRA', 'MANIPALHOS', 'MANKIND', 'MANOMAY', 'MANORAMA',
+    'MANORG', 'MANUGRAPH', 'MANYAVAR', 'MAPMYINDIA', 'MARALOVER', 'MARATHON',
+    'MARICO', 'MARINE', 'MARKOLINES', 'MARKSANS', 'MARSONS', 'MARUTI', 'MASFIN',
+    'MASKINVEST', 'MASTEK', 'MASTERTR', 'MATRIMONY', 'MAWANASUG', 'MAXESTATES',
+    'MAXHEALTH', 'MAXIND', 'MAYURUNIQ', 'MAZDA', 'MAZDOCK', 'MBAPL', 'MBEL',
+    'MBLINFRA', 'MCCHRLS-B', 'MCL', 'MCLEODRUSS', 'MCLOUD', 'MCX', 'MEDANTA',
+    'MEDIASSIST', 'MEDICAMEQ', 'MEDICO', 'MEDPLUS', 'MEESHO', 'MEGASTAR', 'MEIL',
+    'MENNPIS', 'MENONBE', 'MEP', 'MERCANTILE', 'MERCURYEV', 'METROBRAND',
+    'METROGLOBL', 'METROPOLIS', 'MFML', 'MFSL', 'MGEL', 'MGL', 'MHLXMIRU',
+    'MHRIL', 'MICEL', 'MIDHANI', 'MIDWESTLTD', 'MINDACORP', 'MINDTECK',
+    'MIRZAINT', 'MITCON', 'MITTAL', 'MKPL', 'MMFL', 'MMP', 'MMTC', 'MMWL',
+    'MOBIKWIK', 'MODINATUR', 'MODIRUBBER', 'MODIS', 'MODISONLTD', 'MODTHREAD',
+    'MOHITIND', 'MOIL', 'MOKSH', 'MOL', 'MOLDTECH', 'MOLDTKPAC', 'MONARCH',
+    'MONEYBOXX', 'MONTECARLO', 'MOREPENLAB', 'MOSCHIP', 'MOTHERSON', 'MOTILALOFS',
+    'MOTISONS', 'MOTOGENFIN', 'MPHASIS', 'MPSLTD', 'MRF', 'MRPL', 'MSPL',
+    'MSTCLTD', 'MSUMI', 'MTARTECH', 'MTEDUCARE', 'MTNL', 'MUFIN', 'MUFTI',
+    'MUKANDLTD', 'MUKKA', 'MUKTAARTS', 'MUNJALAU', 'MUNJALSHOW', 'MURUDCERA',
+    'MUTHOOTCAP', 'MUTHOOTFIN', 'MUTHOOTMF', 'MVELECTRO', 'MVGJL', 'MWL',
+    'NACLIND', 'NAGREEKCAP', 'NAGREEKEXP', 'NAHARCAP', 'NAHARINDUS', 'NAHARPOLY',
+    'NAHARSPING', 'NAM-INDIA', 'NARMADA', 'NATCAPSUQ', 'NATCOPHARM',
+    'NATHBIOGEN', 'NATIONALUM', 'NATIONSTD', 'NAUKRI', 'NAVA', 'NAVINFLUOR',
+    'NAVKARCORP', 'NAVKARURB', 'NAVNETEDUL', 'NAZARA', 'NBCC', 'NBIFIN', 'NCC',
+    'NCLIND', 'NDGL', 'NDL', 'NDLVENTURE', 'NDRAUTO', 'NDTV', 'NEAGI',
+    'NECCLTD', 'NECLIFE', 'NELCAST', 'NELCO', 'NEOGEN', 'NEPHROPLUS', 'NESCO',
+    'NESTLEIND', 'NETWEB', 'NETWORK18', 'NEUEON', 'NEULANDLAB', 'NEWGEN',
+    'NEXTMEDIA', 'NFL', 'NGIL', 'NGLFINE', 'NH', 'NHPC', 'NIACL', 'NIBE', 'NIBL',
+    'NIITLTD', 'NIITMTS', 'NILAINFRA', 'NILASPACES', 'NILE', 'NILKAMAL',
+    'NIMBSPROJ', 'NINSYS', 'NIPPOBATRY', 'NIRAJ', 'NIRAJISPAT', 'NIRLON', 'NITCO',
+    'NITINSPIN', 'NITIRAJ', 'NITTAGELA', 'NIVABUPA', 'NKIND', 'NLCINDIA', 'NMDC',
+    'NOCIL', 'NOIDATOLL', 'NORBTEAEXP', 'NORTHARC', 'NOVAAGRI', 'NOVARTIND',
+    'NPST', 'NRAIL', 'NRBBEARING', 'NRL', 'NSIL', 'NSLNISP', 'NTPC', 'NTPCGREEN',
+    'NUCLEUS', 'NURECA', 'NUVAMA', 'NUVOCO', 'NYKAA', 'OAL', 'OBCL', 'OBEROIRLTY',
+    'OCCLLTD', 'ODIGMA', 'OFSS', 'OIL', 'OILCOUNTUB', 'OLAELEC', 'OLECTRA',
+    'OMAXAUTO', 'OMAXE', 'OMFREIGHT', 'OMINFRAL', 'OMNI', 'OMPOWER', 'ONELIFECAP',
+    'ONEPOINT', 'ONESOURCE', 'ONGC', 'ONIDA', 'ONMOBILE', 'ONWARDTEC', 'OPTIEMUS',
+    'ORBTEXP', 'ORCHASP', 'ORCHPHARMA', 'ORICONENT', 'ORIENTALTL', 'ORIENTBELL',
+    'ORIENTCEM', 'ORIENTCER', 'ORIENTELEC', 'ORIENTHOT', 'ORIENTLTD', 'ORIENTPPR',
+    'ORIENTTECH', 'ORISSAMINE', 'ORKLAINDIA', 'ORTINGLOBE', 'OSIAHYPER',
+    'OSWALAGRO', 'OSWALGREEN', 'OSWALPUMPS', 'OSWALSEEDS', 'PACEDIGITK',
+    'PAGEIND', 'PAISALO', 'PAKKA', 'PALASHSECU', 'PALREDTEC', 'PANACEABIO',
+    'PANACHE', 'PANAMAPET', 'PANSARI', 'PAR', 'PARACABLES', 'PARADEEP',
+    'PARAGMILK', 'PARAS', 'PARASPETRO', 'PARKHOSPS', 'PARKHOTELS', 'PARSVNATH',
+    'PASHUPATI', 'PASUPTAC', 'PATANJALI', 'PATELENG', 'PATELRMART', 'PATINTLOG',
+    'PAUSHAKLTD', 'PAVNAIND', 'PAYTM', 'PCBL', 'PCJEWELLER', 'PDMJEPAPER',
+    'PDSL', 'PEARLPOLY', 'PENIND', 'PENINLAND', 'PERSISTENT', 'PETRONET', 'PFC',
+    'PFIZER', 'PFOCUS', 'PFS', 'PGEL', 'PGHH', 'PGHL', 'PGIL', 'PHOENIXLTD',
+    'PICCADIL', 'PIDILITIND', 'PIGL', 'PIIND', 'PILANIINVS', 'PILITA', 'PINELABS',
+    'PIONEEREMB', 'PIONRINV', 'PIRAMALFIN', 'PITTIENG', 'PIXTRANS', 'PKTEA',
+    'PLASTIBLEN', 'PLATIND', 'PLAZACABLE', 'PML', 'PNB', 'PNBGILTS', 'PNBHOUSING',
+    'PNC', 'PNCINFRA', 'PNGJL', 'PNGSREVA', 'POCL', 'PODDARMENT', 'POKARNA',
+    'POLICYBZR', 'POLYCAB', 'POLYMED', 'POLYPLEX', 'PONNIERODE', 'POONAWALLA',
+    'POWERGRID', 'POWERICA', 'POWERINDIA', 'POWERMECH', 'PPAP', 'PPL', 'PPLPHARMA',
+    'PRABHA', 'PRADPME', 'PRAENG', 'PRAJIND', 'PRAKASH', 'PRAKASHSTL', 'PRAVEG',
+    'PRAXIS', 'PRECAM', 'PRECOT', 'PRECWIRE', 'PREMCO', 'PREMEXPLN', 'PREMIER',
+    'PREMIERENE', 'PREMIERPOL', 'PRESTIGE', 'PRICOLLTD', 'PRIMESECU', 'PRIMO',
+    'PRINCEPIPE', 'PRITI', 'PRITIKAUTO', 'PRIVISCL', 'PROSTARM', 'PROTEAN',
+    'PROZONER', 'PRSMJOHNSN', 'PRUDENT', 'PRUDMOULI', 'PSB', 'PSPPROJECT', 'PTC',
+    'PTCIL', 'PTL', 'PUNJABCHEM', 'PURVA', 'PVP', 'PVRINOX', 'PVSL', 'PWL',
+    'PYRAMID', 'QMSMEDI', 'QPOWER', 'QUADFUTURE', 'QUESS', 'QUICKHEAL', 'QUINT',
+    'RACE', 'RACLGEAR', 'RADAAN', 'RADHIKAJWE', 'RADIANTCMS', 'RADICO',
+    'RADIOCITY', 'RAILTEL', 'RAIN', 'RAINBOW', 'RAJESHEXPO', 'RAJMET', 'RAJOOENG',
+    'RAJPALAYAM', 'RAJRATAN', 'RAJRILTD', 'RAJSREESUG', 'RAJTV', 'RALLIS',
+    'RAMANEWS', 'RAMAPHO', 'RAMASTEEL', 'RAMBHAJO', 'RAMCOCEM', 'RAMCOIND',
+    'RAMCOSYS', 'RAMKY', 'RAMRAT', 'RANASUG', 'RANEHOLDIN', 'RATEGAIN',
+    'RATNAMANI', 'RATNAVEER', 'RAYMOND', 'RAYMONDLSL', 'RAYMONDREL', 'RBA',
+    'RBLBANK', 'RBZJEWEL', 'RCF', 'RCOM', 'RECLTD', 'REDINGTON', 'REDTAPE',
+    'REFEX', 'REGAAL', 'REGENCERAM', 'RELAXO', 'RELCHEMQ', 'RELIABLE', 'RELIANCE',
+    'RELIGARE', 'RELINFRA', 'RELTD', 'REMSONSIND', 'RENUKA', 'REPCOHOME', 'REPL',
+    'REPRO', 'RESPONIND', 'RETAIL', 'RGL', 'RHETAN', 'RHFL', 'RHIM', 'RHL',
+    'RICOAUTO', 'RIIL', 'RIR', 'RISHABH', 'RITCO', 'RITES', 'RKDL', 'RKEC',
+    'RKFORGE', 'RKSWAMY', 'RMC', 'RMDRIP', 'RML', 'RNBDENIMS', 'ROHLTD',
+    'ROLEXRINGS', 'ROLLT', 'ROML', 'ROSSARI', 'ROSSELLIND', 'ROSSTECH', 'ROTO',
+    'ROUTE', 'RPEL', 'RPGLIFE', 'RPOWER', 'RPPINFRA', 'RPPL', 'RPSGVENT', 'RPTECH',
+    'RRIL', 'RRKABEL', 'RSDFIN', 'RSL', 'RSSOFTWARE', 'RSWM', 'RSYSTEMS',
+    'RTNINDIA', 'RTNPOWER', 'RUBFILA', 'RUBICON', 'RUBYMILLS', 'RUCHINFRA',
+    'RUCHIRA', 'RUDRA', 'RUPA', 'RUSHIL', 'RUSTOMJEE', 'RVHL', 'RVNL', 'RVTH',
+    'S&SPOWER', 'SAATVIKGL', 'SADBHAV', 'SADBHIN', 'SADHNANIQ', 'SAFARI',
+    'SAGARDEEP', 'SAGCEM', 'SAGILITY', 'SAHLIBHFI', 'SAHYADRI', 'SAIL', 'SAILIFE',
+    'SAIPARENT', 'SAKAR', 'SAKHTISUG', 'SAKSOFT', 'SAKUMA', 'SALASAR', 'SALONA',
+    'SALSTEEL', 'SALZERELEC', 'SAMBHAAV', 'SAMBHV', 'SAMHI', 'SAMMAANCAP',
+    'SAMPANN', 'SANATHAN', 'SANDESH', 'SANDHAR', 'SANDUMA', 'SANGAMIND',
+    'SANGHVIMOV', 'SANGINITA', 'SANOFI', 'SANOFICONR', 'SANSERA', 'SANSTAR',
+    'SANWARIA', 'SAPPHIRE', 'SAPPL', 'SARDAEN', 'SAREGAMA', 'SARLAPOLY',
+    'SARVESHWAR', 'SASKEN', 'SATIA', 'SATIN', 'SAURASHCEM', 'SAYAJIHOTL', 'SBC',
+    'SBCL', 'SBFC', 'SBGLP', 'SBICARD', 'SBIFUNDS', 'SBILIFE', 'SBIN', 'SCANSTL',
+    'SCHAEFFLER', 'SCHAND', 'SCHNEIDER', 'SCI', 'SCILAL', 'SCODATUBES', 'SCPL',
+    'SDBL', 'SEAMECLTD', 'SECMARK', 'SECURKLOUD', 'SEDEMAC', 'SEIL', 'SEJALLTD',
+    'SELMC', 'SEMAC', 'SENCO', 'SENORES', 'SEPC', 'SERVOTECH', 'SESHAPAPER',
+    'SETCO', 'SETL', 'SETUINFRA', 'SEYAIND', 'SFL', 'SGFIN', 'SGIL', 'SGL',
+    'SGMART', 'SHADOWFAX', 'SHAH', 'SHAHALLOYS', 'SHAILY', 'SHAKTIPUMP', 'SHALBY',
+    'SHALPAINTS', 'SHANKARA', 'SHANTI', 'SHANTI-RE', 'SHANTIGEAR', 'SHANTIGOLD',
+    'SHARDACROP', 'SHARDAMOTR', 'SHARDUL', 'SHAREINDIA', 'SHBAJRG',
+    'SHEKHAWATI', 'SHEMAROO', 'SHILCTECH', 'SHILPAMED', 'SHINDL', 'SHIVALIK',
+    'SHIVAMAUTO', 'SHIVAMILLS', 'SHIVATEX', 'SHIVAUM', 'SHK', 'SHOPERSTOP',
+    'SHRADHA', 'SHREDIGCEM', 'SHREECEM', 'SHREEJISPG', 'SHREEPUSHK', 'SHREERAMA',
+    'SHRENIK', 'SHREYANIND', 'SHRIKRISH', 'SHRINGARMS', 'SHRIPISTON',
+    'SHRIRAMFIN', 'SHRIRAMPPS', 'SHUKRAPHAR', 'SHYAMCENT', 'SHYAMMETL',
+    'SHYAMTEL', 'SICAGEN', 'SICALLOG', 'SIEMENS', 'SIGACHI', 'SIGIND', 'SIGMA',
+    'SIGMAADV', 'SIGNATURE', 'SIGNPOST', 'SIKA', 'SIKKO', 'SIL', 'SILGO', 'SILINV',
+    'SILLYMONKS', 'SILVERTUC', 'SIMBHALS', 'SIMPLEXINF', 'SINCLAIR', 'SINDHUTRAD',
+    'SINGERIND', 'SINTERCOM', 'SIRCA', 'SIS', 'SITINET', 'SIYSIL', 'SJS', 'SJVN',
+    'SKFINDIA', 'SKFINDUS', 'SKIPPER', 'SKMEGGPROD', 'SKYGOLD', 'SMARTLINK',
+    'SMARTWORKS', 'SMCGLOBAL', 'SMLMAH', 'SMLT', 'SMSPHARMA', 'SNOWMAN', 'SOBHA',
+    'SOFTTECH', 'SOLARA', 'SOLARINDS', 'SOLARWORLD', 'SOLEX', 'SOMANYCERA',
+    'SOMATEX', 'SOMICONVEY', 'SONACOMS', 'SONAL', 'SONAMLTD', 'SONATSOFTW', 'SOTL',
+    'SOUTHBANK', 'SOUTHWEST', 'SPAL', 'SPANDANA', 'SPARC', 'SPCENET', 'SPECIALITY',
+    'SPECTRUM', 'SPENCERS', 'SPIC', 'SPLIL', 'SPLPETRO', 'SPMLINFRA', 'SPORTKING',
+    'SRD', 'SREEL', 'SRF', 'SRGHFL', 'SRHHYPOLTD', 'SRM', 'SRTL', 'SSDL', 'SSWL',
+    'STALLION', 'STANLEY', 'STAR', 'STARCEMENT', 'STARHEALTH', 'STARPAPER',
+    'STARTECK', 'STCINDIA', 'STEELCAS', 'STEELCITY', 'STEELXIND', 'STEL',
+    'STERTOOLS', 'STLNETWORK', 'STLTECH', 'STOVEKRAFT', 'STUDDS', 'STYL',
+    'STYLAMIND', 'STYLEBAAZA', 'STYRENIX', 'SUBEXLTD', 'SUBROS', 'SUDARCOLOR',
+    'SUDARSCHEM', 'SUDEEPPHRM', 'SUKHJITS', 'SULA', 'SUMEETINDS', 'SUMICHEM',
+    'SUMIT', 'SUMMITSEC', 'SUNCLAY', 'SUNDARAM', 'SUNDARMFIN', 'SUNDRMBRAK',
+    'SUNDRMFAST', 'SUNDROP', 'SUNFLAG', 'SUNPHARMA', 'SUNTECK', 'SUNTV',
+    'SUPERHOUSE', 'SUPERSPIN', 'SUPRAJIT', 'SUPREME', 'SUPREMEENG', 'SUPREMEIND',
+    'SUPREMEINF', 'SUPRIYA', 'SURAJEST', 'SURAJLTD', 'SURAKSHA', 'SURANASOL',
+    'SURANAT&P', 'SURYALA', 'SURYALAXMI', 'SURYAROSNI', 'SURYODAY', 'SUTLEJTEX',
+    'SUVEN', 'SUVIDHAA', 'SUYOG', 'SUZLON', 'SVLL', 'SVPGLOB', 'SWANCORP',
+    'SWANDEF', 'SWARAJ', 'SWARAJENG', 'SWELECTES', 'SWIGGY', 'SWSOLAR',
+    'SYMPHONY', 'SYNCOMF', 'SYNGENE', 'SYRMA', 'SYSTMTXC', 'TAALTECH',
+    'TAINWALCHM', 'TAJGVK', 'TAKE', 'TALBROAUTO', 'TAMBOLIIN', 'TANLA',
+    'TARACHAND', 'TARAPUR', 'TARC', 'TARIL', 'TARMAT', 'TARSONS', 'TASTYBITE',
+    'TATACAP', 'TATACHEM', 'TATACOMM', 'TATACONSUM', 'TATAELXSI', 'TATAINVEST',
+    'TATAPOWER', 'TATASTEEL', 'TATATECH', 'TATVA', 'TBOTEK', 'TBZ', 'TCC', 'TCI',
+    'TCIEXP', 'TCIFINANCE', 'TCPLPACK', 'TCS', 'TDPOWERSYS', 'TEAMGTY',
+    'TEAMLEASE', 'TECHM', 'TECHNOCRAF', 'TECHNOE', 'TECHNVISN', 'TECILCHEM',
+    'TEGA', 'TEJASNET', 'TEMBO', 'TENNIND', 'TERASOFT', 'TEXINFRA', 'TEXMOPIPES',
+    'TEXRAIL', 'TFCILTD', 'TFL', 'TGBHOTELS', 'THACKER', 'THAKDEV', 'THANGAMAYL',
+    'THEINVEST', 'THEJO', 'THELEELA', 'THEMISMED', 'THERMAX', 'THOMASCOOK',
+    'THOMASCOTT', 'THYROCARE', 'TI', 'TICL', 'TIGERLOGS', 'TIIL', 'TIINDIA',
+    'TIJARIA', 'TIL', 'TIMETECHNO', 'TIMEX', 'TIMKEN', 'TINNARUBR', 'TIPSFILMS',
+    'TIPSMUSIC', 'TIRUMALCHM', 'TIRUPATIFL', 'TITAGARH', 'TITAN', 'TMB', 'TMCV',
+    'TMPV', 'TNPETRO', 'TNPL', 'TNTELE', 'TOKYOPLAST', 'TOLINS', 'TORNTPHARM',
+    'TORNTPOWER', 'TOTAL', 'TOUCHWOOD', 'TPHQ', 'TPLPLASTEH', 'TRACXN', 'TRANSPEK',
+    'TRANSRAILL', 'TRANSWORLD', 'TRAVELFOOD', 'TREEHOUSE', 'TREJHARA', 'TREL',
+    'TRENT', 'TRF', 'TRIDENT', 'TRIGYN', 'TRITURBINE', 'TRIVENI', 'TRU', 'TRUALT',
+    'TSFINV', 'TTKHLTCARE', 'TTKPRESTIG', 'TTL', 'TTML', 'TURTLEMINT', 'TVSELECT',
+    'TVSHLTD', 'TVSMOTOR', 'TVSSCS', 'TVSSRICHAK', 'TVTODAY', 'TVVISION', 'UBL',
+    'UCAL', 'UCOBANK', 'UDS', 'UEL', 'UFBL', 'UFLEX', 'UFO', 'UGARSUGAR', 'UGROCAP',
+    'UJJIVANSFB', 'ULTRACEMCO', 'ULTRAMAR', 'UMAEXPORTS', 'UMESLTD', 'UMIYA-MRO',
+    'UNICHEMLAB', 'UNIDT', 'UNIECOM', 'UNIENTER', 'UNIINFO', 'UNIMECH', 'UNIONBANK',
+    'UNIPARTS', 'UNITDSPR', 'UNITECH', 'UNITEDPOLY', 'UNITEDTEA', 'UNIVASTU',
+    'UNIVCABLES', 'UNIVPHOTO', 'UNOMINDA', 'UPL', 'URAVIDEF', 'URBANCO', 'URJA',
+    'USHAMART', 'USK', 'UTIAMC', 'UTKARSHBNK', 'UTLSOLAR', 'UTTAMSUGAR',
+    'UYFINCORP', 'V2RETAIL', 'VADILALIND', 'VAIBHAVGBL', 'VAISHALI', 'VAKRANGEE',
+    'VALIANTLAB', 'VALIANTORG', 'VAML', 'VARDHACRLC', 'VARDMNPOLY', 'VARROC',
+    'VASCONEQ', 'VASWANI', 'VBL', 'VCL', 'VEDL', 'VEDPOWER', 'VEEDOL', 'VELJAN',
+    'VENKEYS', 'VENTIVE', 'VENUSPIPES', 'VENUSREM', 'VERANDA', 'VERTOZ', 'VESUVIUS',
+    'VETO', 'VGL', 'VGUARD', 'VHL', 'VHLTD', 'VIDHIING', 'VIDYAWIRES', 'VIJAYA',
+    'VIJIFIN', 'VIKASECO', 'VIKASLIFE', 'VIKRAMSOLR', 'VIKRAN', 'VIMTALABS',
+    'VINATIORGA', 'VINCOFE', 'VINDHYATEL', 'VINEETLAB', 'VINNY', 'VINYLINDIA',
+    'VIPCLOTHNG', 'VIPIND', 'VIPULLTD', 'VIRINCHI', 'VISACHROME', 'VISAKAIND',
+    'VISHNU', 'VISHWARAJ', 'VISL', 'VITAL', 'VIVIANA', 'VIVIDHA', 'VIVIMEDLAB',
+    'VIYASH', 'VLEGOV', 'VLSFINANCE', 'VMART', 'VMM', 'VMSTMT', 'VOEPL', 'VOGL',
+    'VOLTAMP', 'VOLTAS', 'VPRPL', 'VRAJ', 'VRLLOG', 'VSSL', 'VSTIND', 'VSTL',
+    'VSTTILLERS', 'VTL', 'WAAREEENER', 'WAAREEINDO', 'WAAREERTL', 'WABAG',
+    'WAKEFIT', 'WALCHANNAG', 'WANBURY', 'WCIL', 'WEALTH', 'WEBELSOLAR',
+    'WEIZMANIND', 'WEL', 'WELCORP', 'WELENT', 'WELINV', 'WELSPLSOL', 'WELSPUNLIV',
+    'WENDT', 'WESTLIFE', 'WEWIN', 'WEWORK', 'WHEELS', 'WHIRLPOOL', 'WILLAMAGOR',
+    'WINDLAS', 'WINDMACHIN', 'WIPL', 'WIPRO', 'WOCKPHARMA', 'WONDERLA',
+    'WORTHPERI', 'WPIL', 'WSI', 'WSTCSTPAPR', 'XCHANGING', 'XELPMOC', 'XPROINDIA',
+    'XTGLOBAL', 'XTRANET', 'YASHO', 'YATHARTH', 'YATRA', 'YESBANK', 'YUKEN',
+    'ZAGGLE', 'ZEEL', 'ZEELEARN', 'ZEEMEDIA', 'ZENITHEXPO', 'ZENITHSTL',
+    'ZENSARTECH', 'ZENTEC', 'ZFCVINDIA', 'ZFSTEERING', 'ZIMLAB', 'ZODIAC',
+    'ZODIACLOTH', 'ZOTA', 'ZSARACOM', 'ZUARI', 'ZUARIIND', 'ZYDUSLIFE', 'ZYDUSWELL'
+]
+
+
+def wilder_rma(series: pd.Series, period: int) -> pd.Series:
+    values = series.to_numpy(dtype=float)
+    result = np.full(len(values), np.nan)
+    if period < 1 or len(values) < period:
+        return pd.Series(result, index=series.index)
+
+    initial_average = np.nanmean(values[:period])
+    result[period - 1] = initial_average
+    for index in range(period, len(values)):
+        previous = result[index - 1]
+        if not np.isnan(previous):
+            result[index] = (previous * (period - 1) + values[index]) / period
+        else:
+            result[index] = initial_average
+    return pd.Series(result, index=series.index)
+
+
+def calculate_supertrend(df: pd.DataFrame):
+    """Use the same Wilder ATR and Supertrend calculation as SupperWeekScan.py."""
+    if df is None or df.empty:
+        return None, None
+
+    work = df.copy()
+    work = work.rename(columns={column: column.title() for column in work.columns})
+    required = {"High", "Low", "Close", "Date"}
+    if not required.issubset(set(work.columns)):
+        return None, None
+
+    work = work.dropna(subset=["High", "Low", "Close", "Date"]).reset_index(drop=True)
+    if len(work) < ATR_PERIOD + 2:
+        return None, None
+
+    hl2 = (work["High"] + work["Low"] ) / 2
+    true_range = pd.concat(
+        [
+            work["High"] - work["Low"],
+            (work["High"] - work["Close"].shift()).abs(),
+            (work["Low"] - work["Close"].shift()).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = wilder_rma(true_range, ATR_PERIOD)
+    basic_upperband = hl2 + FACTOR * atr
+    basic_lowerband = hl2 - FACTOR * atr
+    final_upperband = np.full(len(work), np.nan)
+    final_lowerband = np.full(len(work), np.nan)
+    supertrend_values = np.full(len(work), np.nan)
+    direction = np.full(len(work), -1)
+    close = work["Close"].to_numpy()
+    atr_values = atr.to_numpy()
+    upper_values = basic_upperband.to_numpy()
+    lower_values = basic_lowerband.to_numpy()
+
+    for index in range(len(work)):
+        if np.isnan(atr_values[index]):
+            continue
+        if index == 0 or np.isnan(atr_values[index - 1]):
+            final_upperband[index] = upper_values[index]
+            final_lowerband[index] = lower_values[index]
+            supertrend_values[index] = final_upperband[index]
+            continue
+
+        previous_close = close[index - 1]
+        final_upperband[index] = (
+            upper_values[index]
+            if upper_values[index] < final_upperband[index - 1]
+            or previous_close > final_upperband[index - 1]
+            else final_upperband[index - 1]
+        )
+        final_lowerband[index] = (
+            lower_values[index]
+            if lower_values[index] > final_lowerband[index - 1]
+            or previous_close < final_lowerband[index - 1]
+            else final_lowerband[index - 1]
+        )
+        if direction[index - 1] == -1:
+            direction[index] = 1 if close[index] > final_upperband[index] else -1
+        else:
+            direction[index] = -1 if close[index] < final_lowerband[index] else 1
+        supertrend_values[index] = (
+            final_lowerband[index] if direction[index] == 1 else final_upperband[index]
+        )
+
+    work["Supertrend"] = supertrend_values
+    work["Direction"] = direction
+    if len(work) < 2:
+        return None, None
+
+    last = work.iloc[-1]
+    previous = work.iloc[-2]
+    signal = None
+    if pd.notna(last["Supertrend"]) and pd.notna(previous["Supertrend"]):
+        if last["Direction"] == 1 and previous["Direction"] == -1:
+            signal = "BUY"
+        elif last["Direction"] == -1 and previous["Direction"] == 1:
+            signal = "SELL"
+    return signal, last
+
+
+def calculate_rsi(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+def yahoo_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper()
+    if symbol.endswith(".NS") or symbol.endswith(".BO"):
+        return symbol
+    return f"{symbol}.NS"
+
+
+def fetch_history(symbol: str, period: str, retries: int = 2):
+    interval = "1wk" if period == "weekly" else "1d"
+    history_days = MAX_HISTORY_DAYS if period == "weekly" else 120
+    end = datetime.now()
+    start = end - timedelta(days=history_days)
+
+    for attempt in range(retries + 1):
+        try:
+            df = yf.download(
+                yahoo_symbol(symbol),
+                start=start.strftime("%Y-%m-%d"),
+                end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
+                interval=interval,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
+            if df is None or df.empty:
+                return None
+
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.reset_index()
+            if "Date" not in df.columns:
+                return None
+
+            df = df.rename(columns={
+                "Open": "open", "High": "high", "Low": "low",
+                "Close": "close", "Volume": "volume",
+            })
+            df["Date"] = pd.to_datetime(df["Date"])
+            for column in ("open", "high", "low", "close"):
+                df[column] = pd.to_numeric(df[column], errors="coerce")
+            df = df.dropna(subset=["Date", "open", "high", "low", "close"])
+            df = df.rename(columns={
+                "open": "Open", "high": "High", "low": "Low", "close": "Close",
+            })
+            df = df.sort_values("Date").tail(400).reset_index(drop=True)
+            return df
+        except Exception as exc:
+            if attempt == retries:
+                print(f"[WARN] {symbol} Yahoo Finance fetch failed: {exc}", flush=True)
+                return None
+            time.sleep(1.0)
+    return None
+
+
+def scan_supertrend(symbols, period: str, delay_seconds: float):
+    results = []
+    total = len(symbols)
+    for index, symbol in enumerate(symbols, start=1):
+        df = fetch_history(symbol, period)
+        if df is None or df.empty:
+            print(
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | SUPERTREND=NA | SIGNAL=NO_DATA",
+                flush=True,
+            )
+        else:
+            signal, latest = calculate_supertrend(df)
+            if latest is None:
+                print(
+                    f"[SCAN] {index}/{total} {symbol} | PRICE=NA | SUPERTREND=NA | SIGNAL=INSUFFICIENT_DATA",
+                    flush=True,
+                )
+            else:
+                price = latest.get("Close")
+                st_value = latest.get("Supertrend")
+                rsi_series = calculate_rsi(df["Close"])
+                latest_rsi = rsi_series.iloc[-1] if not rsi_series.empty else np.nan
+                rsi_text = f"{float(latest_rsi):.2f}" if pd.notna(latest_rsi) else "NA"
+                price_text = f"{float(price):.2f}" if pd.notna(price) else "NA"
+                st_text = f"{float(st_value):.2f}" if pd.notna(st_value) else "NA"
+
+                if signal == "BUY" and (pd.isna(latest_rsi) or latest_rsi <= RSI_BUY_THRESHOLD):
+                    signal_text = "RSI_CONFIRMATION_FAILED"
+                else:
+                    signal_text = signal or "NO_SIGNAL"
+
+                print(
+                    f"[SCAN] {index}/{total} {symbol} | PRICE={price_text} | "
+                    f"SUPERTREND={st_text} | SIGNAL={signal_text}",
+                    flush=True,
+                )
+                if signal == "BUY":
+                    if pd.notna(latest_rsi) and latest_rsi > RSI_BUY_THRESHOLD:
+                        results.append({
+                            "symbol": symbol,
+                            "side": "BUY",
+                            "date": pd.Timestamp(latest["Date"]).date().isoformat(),
+                            "price": float(price),
+                            "supertrend": float(st_value),
+                            "rsi": float(latest_rsi),
+                        })
+                elif signal == "SELL":
+                    results.append({
+                        "symbol": symbol,
+                        "side": "SELL",
+                        "date": pd.Timestamp(latest["Date"]).date().isoformat(),
+                        "price": float(price),
+                        "supertrend": float(st_value),
+                        "rsi": float(latest_rsi) if pd.notna(latest_rsi) else None,
+                    })
+
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+    return results
+
+
+def parse_symbols(raw_symbols: str | None):
+    if not raw_symbols:
+        return WATCHLIST
+    symbols = [item.strip().upper() for item in raw_symbols.split(",") if item.strip()]
+    return symbols or WATCHLIST
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Yahoo Finance Supertrend stock scanner")
+    parser.add_argument("--period", choices=("daily", "weekly"), default=DEFAULT_PERIOD)
+    parser.add_argument("--symbols", help="Comma-separated NSE symbols, for example RELIANCE,TCS,INFY")
+    parser.add_argument("--delay", type=float, default=REQUEST_DELAY_SECONDS, help="Delay between Yahoo requests")
+    args = parser.parse_args()
+
+    symbols = parse_symbols(args.symbols)
+    print(
+        f"[SCAN] Starting {args.period} Supertrend scan for {len(symbols)} symbols",
+        flush=True,
+    )
+    results = scan_supertrend(symbols, args.period, max(args.delay, 0.0))
+    trading_date = datetime.now().date().isoformat()
+    print(
+        f"[SCAN RESULTS] Script=yfweek Period=weekly "
+        f"ScanDate={trading_date} Results={json.dumps(results, separators=(',', ':'))}",
+        flush=True,
+    )
+    print(
+        f"[SCAN COMPLETE] yfweek found {len(results)} weekly BUY/SELL signal(s).",
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

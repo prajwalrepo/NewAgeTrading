@@ -658,7 +658,6 @@ def scan_weekly_supertrend():
     results = []
     total = len(WATCHLIST)
     for index, symbol in enumerate(WATCHLIST, start=1):
-        print(f"[SCAN] {index}/{total} {symbol} | FETCHING", flush=True)
         data = safe_get_weekly_data(symbol)
         if data is None or data.empty:
             print(
@@ -677,13 +676,12 @@ def scan_weekly_supertrend():
 
         price = latest.get("Close")
         st_value = latest.get("Supertrend")
-        direction_text = "UP" if latest.get("Direction") == 1 else "DOWN"
         price_text = f"{float(price):.2f}" if pd.notna(price) else "NA"
         st_text = f"{float(st_value):.2f}" if pd.notna(st_value) else "NA"
         signal_text = signal or "NO_SIGNAL"
         print(
             f"[SCAN] {index}/{total} {symbol} | PRICE={price_text} | "
-            f"SUPERTREND={st_text} | DIRECTION={direction_text} | SIGNAL={signal_text}",
+            f"SUPERTREND={st_text} | SIGNAL={signal_text}",
             flush=True,
         )
 

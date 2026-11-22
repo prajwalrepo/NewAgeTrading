@@ -73,7 +73,7 @@ WATCHLIST = [
     "WHIRLPOOL", "WOCKPHARMA", "ZFCVINDIA", "ZEEL", "ZENTEC", "ZENSARTECH",
     "ZYDUSWELL",
 ]
-MAX_DAILY_HISTORY_DAYS = 18
+MAX_DAILY_HISTORY_DAYS = 90
 ATR_PERIOD = 10
 FACTOR = 3.0
 
@@ -184,7 +184,7 @@ def safe_get_daily_data(growwapi, symbol: str):
         if data.empty:
             print(f"[WARN] Daily data frame empty for {symbol}", flush=True)
             return None
-        return data.tail(max(30, ATR_PERIOD + 5))
+        return data.tail(max(60, ATR_PERIOD + 5))
     except Exception as exc:
         print(f"[ERROR] Failed to fetch daily data for {symbol}: {exc}", flush=True)
         return None
@@ -281,26 +281,40 @@ def scan_daily_signals(growwapi):
     signals = []
     total = len(WATCHLIST)
     for index, symbol in enumerate(WATCHLIST, start=1):
-        print(f"[SCAN] {index}/{total} {symbol} | FETCHING", flush=True)
         data = safe_get_daily_data(growwapi, symbol)
         if data is None or data.empty:
-            print(f"[SCAN] {index}/{total} {symbol} | SIGNAL=NO_DATA", flush=True)
+            print(
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | "
+                f"SUPERTREND=NA | SIGNAL=NO_DATA",
+                flush=True,
+            )
+            continue
+
+        if len(data) < ATR_PERIOD + 2:
+            print(
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | "
+                f"SUPERTREND=NA | SIGNAL=INSUFFICIENT_DATA",
+                flush=True,
+            )
             continue
 
         signal, latest = calculate_supertrend(data)
         if latest is None:
             print(
-                f"[SCAN] {index}/{total} {symbol} | SIGNAL=INSUFFICIENT_DATA",
+                f"[SCAN] {index}/{total} {symbol} | PRICE=NA | "
+                f"SUPERTREND=NA | SIGNAL=INSUFFICIENT_DATA",
                 flush=True,
             )
             continue
 
         price = latest.get("Close")
+        st_value = latest.get("Supertrend")
         price_text = f"{float(price):.2f}" if pd.notna(price) else "NA"
+        st_text = f"{float(st_value):.2f}" if pd.notna(st_value) else "NA"
         signal_text = signal or "NO_SIGNAL"
         print(
             f"[SCAN] {index}/{total} {symbol} | PRICE={price_text} | "
-            f"SIGNAL={signal_text}",
+            f"SUPERTREND={st_text} | SIGNAL={signal_text}",
             flush=True,
         )
         if signal in {"BUY", "SELL"}:

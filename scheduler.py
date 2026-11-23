@@ -37,6 +37,9 @@ LOG_DIR.mkdir(exist_ok=True)
 RUN_LOG_DIR = LOG_DIR / "script_runs"
 RUN_LOG_DIR.mkdir(exist_ok=True)
 CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
+ENV_FILE = Path(__file__).parent / ".env"
+MONTHLY_REPORT_DIR = RUN_LOG_DIR / "monthly"
+MONTHLY_REPORT_DIR.mkdir(exist_ok=True)
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
@@ -223,9 +226,52 @@ def _merge_dict(base, updates):
     for key, value in (updates or {}).items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             _merge_dict(base[key], value)
+        elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
+            body = (
+                f"{run_context['config_key']} completed\n"
+                f"Trading date: {trading_date}\n"
+                f"Stop reason: {reason}\n"
+                "No completed live or paper CE/PE trade outcomes were recorded.\n"
+                f"Excel report: {report_path.name}"
+            )
+        elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
+            body = (
+                f"{run_context['config_key']} completed\n"
+                f"Trading date: {trading_date}\n"
+                f"Stop reason: {reason}\n"
+                "No completed live or paper CE/PE trade outcomes were recorded.\n"
+                f"Excel report: {report_path.name}"
+            )
         else:
             base[key] = value
     return base
+
+
+def load_env_file():
+    """Load private SMTP and broker credentials from the project .env file."""
+    if not ENV_FILE.exists():
+        return
+    try:
+        with ENV_FILE.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and not os.getenv(key):
+                    os.environ[key] = value
+    except Exception as exc:
+        logger.error(f"[CONFIG] Failed to read {ENV_FILE.name}: {exc}")
+
+    email_cfg = CONFIG["email_notifications"]
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_username = os.getenv("SMTP_USERNAME", "").strip()
+    if smtp_password:
+        email_cfg["smtp_password"] = smtp_password
+    if smtp_username:
+        email_cfg["smtp_username"] = smtp_username
 
 
 def _normalize_run_day(day_value):
@@ -243,6 +289,7 @@ def _normalize_run_day(day_value):
 
 def load_scheduler_config():
     """Load optional scheduler overrides from scheduler_config.json."""
+    load_env_file()
     if not CONFIG_FILE.exists():
         logger.info(f"[CONFIG] Using in-file schedule defaults (missing {CONFIG_FILE.name})")
         return
@@ -640,7 +687,12 @@ PRICE_MILESTONE_FIELD_PATTERN = re.compile(
 )
 TRADE_REPORT_COLUMNS = (
     "Script", "Side", "Time", "Symbol", "Strike", "Price", "Reason", "Lots",
-    "Lot Size", "Qty", "Order Placed",
+    "Lot Size", "Qty", "Order Placed", "Highest Price",
+)
+LEGACY_TRADE_REPORT_COLUMNS = TRADE_REPORT_COLUMNS[:-1]
+DAILY_SUMMARY_COLUMNS = (
+    "Side (CE/PE)", "Action", "Time", "Strike", "Price", "Reason", "Qty",
+    "Order Placed", "Highest Price Observed",
 )
 TRADE_REPORT_LOCK = threading.Lock()
 PRICE_MILESTONE_EMAIL_GUARD = {}
@@ -653,7 +705,7 @@ def _initialize_trade_report_sheet(workbook):
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"
-    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16), start=1):
+    for index, width in enumerate((18, 12, 24, 36, 12, 14, 48, 12, 12, 12, 16, 18), start=1):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
     sheet.column_dimensions[sheet.cell(row=1, column=len(TRADE_REPORT_COLUMNS) + 1).column_letter].hidden = True
     return sheet
@@ -693,6 +745,7 @@ def parse_trade_signal(line):
         "Sell At": fields.get("SellAt", ""),
         "PnL": fields.get("PnL", ""),
         "Highest Price": fields.get("HighestPrice", ""),
+        "Highest Price Observed": fields.get("HighestPrice", ""),
     }
 
 
@@ -765,6 +818,14 @@ def _format_script_display_name(script_name):
 def _to_float_text(value):
     try:
         return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def _compact_float(value):
+    try:
+        number = float(value)
+        return str(int(number)) if number.is_integer() else str(number)
     except (TypeError, ValueError):
         return str(value or "")
 
@@ -873,7 +934,15 @@ def _build_price_milestone_subject(milestone):
 def _build_price_milestone_content(milestone):
     script_name = _format_script_display_name(milestone.get("Script"))
     real_order_text = "Yes" if milestone.get("Order Placed", "NO") == "YES" else "No"
-    price_move_text = f"{_to_float_text(milestone.get('Move'))} points ({milestone.get('Direction', 'NA')})"
+    move_raw = str(milestone.get("Move", "") or "")
+    move_text = _to_float_text(move_raw)
+    if move_raw.startswith("+"):
+        move_text = f"+{_to_float_text(abs(float(move_raw)))}"
+    elif move_raw.startswith("-"):
+        move_text = f"-{_to_float_text(abs(float(move_raw)))}"
+    elif not move_raw.startswith("+"):
+        move_text = f"+{move_text}"
+    price_move_text = f"{move_text} points ({milestone.get('Direction', 'NA')})"
 
     lines = [
         "Option price milestone",
@@ -881,6 +950,7 @@ def _build_price_milestone_content(milestone):
         f"Script name: {script_name}",
         f"Time: {milestone.get('Time')}",
         f"Strike: {milestone.get('Strike')}",
+        f"Side: {milestone.get('Side')}",
         "Signal: PRICE MOVE",
         f"Entry: {_to_float_text(milestone.get('Entry'))}",
         f"Current premium: {_to_float_text(milestone.get('Price'))}",
@@ -910,7 +980,8 @@ def _build_price_milestone_content(milestone):
         f"<tr><td>Current premium</td><td>{_to_float_text(milestone.get('Price'))}</td></tr>",
         f"<tr><td>Quantity</td><td>{_to_int_text(milestone.get('Qty'))}</td></tr>",
         f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
-        f"<tr><td>Price move</td><td><strong>{price_move_text}</strong></td></tr>",
+        f"<tr><td>Price move</td><td><strong>{move_text} points</strong> "
+        f"({milestone.get('Direction', 'NA')})</td></tr>",
     ]
 
     if retracement_text:
@@ -920,6 +991,46 @@ def _build_price_milestone_content(milestone):
 
     html_lines.append("</table>")
     return "\n".join(lines), "\n".join(html_lines)
+
+
+def _prepare_trade_report_sheet(workbook, sheet, report_name=""):
+    """Upgrade legacy trade sheets in place without losing existing rows."""
+    headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+    if "Highest Price" not in headers:
+        event_index = headers.index("Event Key") + 1 if "Event Key" in headers else len(TRADE_REPORT_COLUMNS) + 1
+        peak_column = len(LEGACY_TRADE_REPORT_COLUMNS) + 1
+        if peak_column >= event_index:
+            peak_column = event_index
+        sheet.insert_cols(peak_column)
+        sheet.cell(row=1, column=peak_column, value="Highest Price")
+        sheet.column_dimensions[sheet.cell(row=1, column=peak_column).column_letter].width = 18
+    for index, header in enumerate(TRADE_REPORT_COLUMNS, start=1):
+        sheet.cell(row=1, column=index, value=header)
+    event_column = len(TRADE_REPORT_COLUMNS) + 1
+    sheet.cell(row=1, column=event_column, value="Event Key")
+    sheet.column_dimensions[sheet.cell(row=1, column=event_column).column_letter].hidden = True
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+
+def _trade_report_rows(report_path, sheet_name="Trades"):
+    if not Path(report_path).exists():
+        return []
+    workbook = load_workbook(report_path, read_only=True, data_only=True)
+    try:
+        sheet = workbook[sheet_name]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        rows = []
+        for values in sheet.iter_rows(min_row=2, values_only=True):
+            if not any(value is not None for value in values[:len(headers)]):
+                continue
+            row = dict(zip(headers, values))
+            rows.append(row)
+        return rows
+    finally:
+        workbook.close()
 
 
 def _trade_report_path(config_key, trade_time):
@@ -939,6 +1050,7 @@ def append_trade_to_report(config_key, trade):
         if report_path.exists():
             workbook = load_workbook(report_path)
             sheet = workbook["Trades"]
+            _prepare_trade_report_sheet(workbook, sheet, report_path.name)
             key_column = len(TRADE_REPORT_COLUMNS) + 1
             if any(
                 row[0].value == event_key
@@ -977,6 +1089,149 @@ def _ensure_trade_report_exists(report_path):
         workbook = Workbook()
         _initialize_trade_report_sheet(workbook)
         workbook.save(report_path)
+
+
+def _monthly_sheet_name(config_key):
+    upper = str(config_key or "").upper()
+    if "SENSEX" in upper:
+        return "SENSEX"
+    return "NIFTY"
+
+
+def append_trade_to_monthly_report(config_key, trade):
+    trade_date = _format_month_key(trade.get("Time"))
+    MONTHLY_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = MONTHLY_REPORT_DIR / f"NIFTY_{trade_date}.xlsx"
+    sheet_name = _monthly_sheet_name(config_key)
+    event_data = json.dumps(trade, sort_keys=True, separators=(",", ":"))
+    event_key = hashlib.sha256(event_data.encode("utf-8")).hexdigest()
+    with TRADE_REPORT_LOCK:
+        if report_path.exists():
+            workbook = load_workbook(report_path)
+            if sheet_name not in workbook.sheetnames:
+                sheet = workbook.create_sheet(sheet_name)
+                _initialize_trade_report_sheet(workbook)
+                sheet = workbook[sheet_name]
+            else:
+                sheet = workbook[sheet_name]
+            _prepare_trade_report_sheet(workbook, sheet, report_path.name)
+        else:
+            workbook = Workbook()
+            workbook.active.title = sheet_name
+            sheet = workbook[sheet_name]
+            sheet.append((*TRADE_REPORT_COLUMNS, "Event Key"))
+        key_column = len(TRADE_REPORT_COLUMNS) + 1
+        if any(
+            row[0].value == event_key
+            for row in sheet.iter_rows(min_row=2, min_col=key_column, max_col=key_column)
+        ):
+            workbook.close()
+            return report_path
+        row = []
+        for column in TRADE_REPORT_COLUMNS:
+            value = trade.get(column, "")
+            if column in {"Strike", "Price", "Lots", "Lot Size", "Qty", "Highest Price"} and value:
+                try:
+                    number = float(value)
+                    value = int(number) if number.is_integer() else number
+                except (TypeError, ValueError):
+                    pass
+            row.append(value)
+        sheet.append(tuple(row) + (event_key,))
+        workbook.save(report_path)
+        workbook.close()
+    return report_path
+
+
+def _format_month_key(iso_or_text):
+    try:
+        return datetime.fromisoformat(str(iso_or_text).replace("Z", "+00:00")).strftime("%b").upper()
+    except ValueError:
+        return get_ist_time().strftime("%b").upper()
+
+
+
+def _trade_rows_text(rows, columns=None):
+    if columns is None:
+        columns = LEGACY_TRADE_REPORT_COLUMNS
+        text_rows = [" | ".join(str(column) for column in columns)]
+        for row in rows:
+            values = [
+                str(row.get(column, "") if row.get(column, "") is not None else "")
+                for column in columns
+            ]
+            text_rows.append(" | ".join(values))
+        return "\n".join(text_rows)
+
+    text_rows = [" | ".join(columns)]
+    for row in rows:
+        side = _extract_option_side(row.get("Symbol"))
+        action = str(row.get("Side", "")).upper()
+        time_value = str(row.get("Time", "") or "")
+        if "T" in time_value:
+            time_value = time_value.split("T", 1)[1][:8]
+        values = (
+            side,
+            action,
+            time_value,
+            str(row.get("Strike", "")),
+            _to_float_text(row.get("Price")),
+            str(row.get("Reason", "") or ""),
+            _to_int_text(row.get("Qty")),
+            str(row.get("Order Placed", "") or ""),
+            _compact_float(row.get("Highest Price Observed") or row.get("Highest Price")),
+        )
+        text_rows.append(" | ".join(values))
+    return "\n".join(text_rows)
+
+
+def _trade_report_values(trade):
+    values = [
+        trade.get("Script", ""),
+        trade.get("Side", ""),
+        trade.get("Time", ""),
+        trade.get("Symbol", ""),
+        trade.get("Strike", ""),
+        trade.get("Price", ""),
+        trade.get("Reason", ""),
+        trade.get("Lots", ""),
+        trade.get("Lot Size", ""),
+        trade.get("Qty", ""),
+        trade.get("Order Placed", ""),
+        float(trade.get("Highest Price Observed") or trade.get("Highest Price") or 0),
+    ]
+    return tuple(values)
+
+
+def _completed_pnl(rows):
+    total = 0.0
+    found = False
+    buys_by_symbol = {}
+    for row in rows:
+        side = str(row.get("Side", "")).upper()
+        symbol = str(row.get("Symbol", "") or "")
+        if side == "BUY":
+            try:
+                buys_by_symbol[symbol] = (float(row.get("Price", 0) or 0), int(float(row.get("Qty", 0) or 0)))
+            except (TypeError, ValueError):
+                pass
+            continue
+        value = row.get("PnL")
+        if value not in (None, ""):
+            try:
+                total += float(value)
+                found = True
+            except (TypeError, ValueError):
+                pass
+        elif side == "SELL" and symbol in buys_by_symbol:
+            try:
+                buy_price, qty = buys_by_symbol[symbol]
+                sell_price = float(row.get("Price", 0) or 0)
+                total += (sell_price - buy_price) * qty
+                found = True
+            except (TypeError, ValueError):
+                pass
+    return total if found else None
 
 
 def _trade_report_summary(report_path):
@@ -1075,24 +1330,77 @@ def email_daily_trade_summary(run_context, reason):
 
     trading_date = run_context["started_at"].strftime("%Y-%m-%d")
     subject = f"[DAILY SUMMARY] {run_context['config_key']} {trading_date}"
-    body = (
-        f"Daily trading summary\n"
-        f"Script: {run_context['config_key']}\n"
-        f"Trading date: {trading_date}\n"
-        f"Stop reason: {reason}\n"
-        f"Trade signals: {total}\n"
-        f"Buy signals: {buys}\n"
-        f"Sell signals: {sells}\n"
-        f"Orders placed: {orders_placed}\n"
-        f"Excel report: {report_path.name}"
-    )
+    config_key = str(run_context["config_key"]).upper()
+    if config_key in {"SENSEXINTRA", "NIFTYINTRA"}:
+        rows = _trade_report_rows(report_path)
+        body_lines = [
+            f"{run_context['config_key']} completed",
+            f"Trading date: {trading_date}",
+            f"Stop reason: {reason}",
+        ]
+        pnl = _completed_pnl(rows)
+        if pnl is not None:
+            body_lines.append(f"Today PNL: {pnl:.2f}")
+        elif not rows:
+            body_lines.append("No completed live or paper CE/PE trade outcomes were recorded.")
+        body_lines.append("")
+        body_lines.append(_trade_rows_text(rows, columns=DAILY_SUMMARY_COLUMNS))
+        body_lines.append("")
+        body_lines.append(f"Excel report: {report_path.name}")
+        body = "\n".join(body_lines)
+    elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
+        body = (
+            f"{run_context['config_key']} completed\n"
+            f"Trading date: {trading_date}\n"
+            f"Stop reason: {reason}\n"
+            "No completed live or paper CE/PE trade outcomes were recorded.\n"
+            f"Excel report: {report_path.name}"
+        )
+    else:
+        body = (
+            f"Daily trading summary\n"
+            f"Script: {run_context['config_key']}\n"
+            f"Trading date: {trading_date}\n"
+            f"Stop reason: {reason}\n"
+            f"Trade signals: {total}\n"
+            f"Buy signals: {buys}\n"
+            f"Sell signals: {sells}\n"
+            f"Orders placed: {orders_placed}\n"
+            f"Excel report: {report_path.name}"
+        )
 
     if str(run_context.get("config_key") or "").upper() == "320TRADE":
         extra_summary = _extract_320trade_summary(run_context)
         if extra_summary:
             body = f"{body}\n\nExecuted 3:20 CE/PE outcome:\n{extra_summary}"
 
-    send_email_notification(subject, body, attachment_path=report_path)
+    html_body = None
+    if config_key in {"SENSEXINTRA", "NIFTYINTRA"}:
+        rows = _trade_report_rows(report_path)
+        html_rows = "".join(
+            "<tr>"
+            f"<td>{_extract_option_side(row.get('Symbol'))}</td>"
+            f"<td>{str(row.get('Side', '')).upper()}</td>"
+            f"<td>{_format_signal_time_short(row.get('Time'))}</td>"
+            f"<td>{row.get('Strike', '')}</td>"
+            f"<td>{_to_float_text(row.get('Price'))}</td>"
+            f"<td>{row.get('Reason', '')}</td>"
+            f"<td>{_to_int_text(row.get('Qty'))}</td>"
+            f"<td>{row.get('Order Placed', '')}</td>"
+            f"<td>{_to_float_text(row.get('Highest Price Observed') or row.get('Highest Price'))}</td>"
+            "</tr>"
+            for row in rows
+        )
+        html_body = (
+            "<h2>Daily trading summary</h2>"
+            f"<p>{body.replace(chr(10), '<br>')}</p>"
+            "<table border='1' cellpadding='4' cellspacing='0'>"
+            "<tr><th>Side (CE/PE)</th><th>Action</th><th>Time</th><th>Strike</th>"
+            "<th>Price</th><th>Reason</th><th>Qty</th><th>Order Placed</th>"
+            "<th>Highest Price Observed</th></tr>"
+            f"{html_rows}</table>"
+        )
+    send_email_notification(subject, body, attachment_path=report_path, html_body=html_body)
 
 
 def email_trade_signal(config_key, trade, report_path=None):
@@ -1115,7 +1423,7 @@ def process_trade_signal(config_key, output_line, script_config=None):
         return
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
-    if is_new and send_on_signals and script_emails_enabled:
+    if (is_new or str(trade.get("Reason", "")) == "Trade result") and send_on_signals and script_emails_enabled:
         email_trade_signal(config_key, trade, report_path)
 
 
@@ -1149,6 +1457,55 @@ def process_price_milestone(config_key, output_line, script_config=None):
     send_email_notification(subject, body, html_body=html_body)
 
 
+def process_trade_result(config_key, output_line, script_config=None):
+    """Normalize a [TRADE RESULT] line and route it through the trade report/email path."""
+    if "[TRADE RESULT]" not in output_line:
+        return
+    fields = dict(re.findall(r"(\w+)=(\S+)", output_line))
+    if not all(fields.get(key) for key in ("Script", "Side", "Symbol", "Strike", "SellAt")):
+        return
+    time_value = fields.get("Time")
+    if not time_value:
+        time_value = get_ist_time().isoformat(timespec="seconds")
+    synthetic = (
+        "[TRADE SIGNAL] "
+        f"Script={fields['Script']} Side=SELL Time={time_value} "
+        f"Symbol={fields['Symbol']} Strike={fields['Strike']} Price={fields['SellAt']} "
+        f"{f'BuyAt={fields['BuyAt']} ' if fields.get('BuyAt') else ''}"
+        f"{f'SellAt={fields['SellAt']} ' if fields.get('SellAt') else ''}"
+        f"{f'Qty={fields['Qty']} ' if fields.get('Qty') else ''}"
+        f"{f'PnL={fields['PnL']} ' if fields.get('PnL') else ''}"
+        f"{f'HighestPrice={fields['HighestPrice']} ' if fields.get('HighestPrice') else ''}"
+        f"Reason=Trade result OrderPlaced={fields.get('OrderPlaced', 'NO')}"
+    )
+    process_trade_signal(config_key, synthetic, script_config)
+
+
+def process_order_confirmation(config_key, output_line, script_config=None):
+    """Convert paper/order confirmation lines into a standard BUY trade email."""
+    match = re.search(
+        r"\[(?:PAPER BUY TRACKED|BUY CONFIRMED)\]\s+(\S+)\s+Qty=(\S+)\s+Price=(\S+)",
+        output_line,
+    )
+    if not match:
+        return
+    symbol, qty, price = match.groups()
+    timestamp_match = re.search(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", output_line)
+    time_value = (
+        timestamp_match.group(1).replace(" ", "T")
+        if timestamp_match
+        else get_ist_time().isoformat(timespec="seconds")
+    )
+    strike_match = re.search(r"-(\d+)-(?:CE|PE)$", symbol)
+    synthetic = (
+        "[TRADE SIGNAL] "
+        f"Script={config_key} Side=BUY Time={time_value} "
+        f"Symbol={symbol} Strike={strike_match.group(1) if strike_match else 'NA'} "
+        f"Price={price} Qty={qty} Reason=PAPER BUY CONFIRMED OrderPlaced=NO"
+    )
+    process_trade_signal(config_key, synthetic, script_config)
+
+
 def capture_script_output(config_key, process, run_log_path, run_context, script_config=None):
     """Read and log script output in real-time"""
     try:
@@ -1165,6 +1522,8 @@ def capture_script_output(config_key, process, run_log_path, run_context, script
                     script_log_handle.flush()
                     process_trade_signal(config_key, output, script_config)
                     process_price_milestone(config_key, output, script_config)
+                    process_trade_result(config_key, output, script_config)
+                    process_order_confirmation(config_key, output, script_config)
                     process_scan_results(config_key, output, script_config)
     except Exception as e:
         logger.error(f"[{config_key}] Error reading output: {e}")
@@ -1205,47 +1564,46 @@ def process_scan_results(script_name, output, script_config=None):
 
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "BUY SELL Signals"
-    sheet.append(("Symbol", "Side", "Date", "Price", "Supertrend", "RSI"))
+    sheet.title = "Scan Results"
+    sheet.append(("Stock Name", "Price", "ST Value", "Signal", "Generated Date"))
     for cell in sheet[1]:
         cell.font = Font(bold=True)
 
     for row in results:
         if isinstance(row, dict):
+            try:
+                generated_date = datetime.strptime(scan_date, "%Y-%m-%d")
+            except (TypeError, ValueError):
+                pass
             sheet.append((
                 row.get("symbol", ""),
-                str(row.get("side", "")).upper(),
-                row.get("date", ""),
                 row.get("price", ""),
                 row.get("supertrend", ""),
-                row.get("rsi", ""),  # Add RSI value
+                str(row.get("side", "")).upper(),
+                generated_date,
             ))
 
-    for index, width in enumerate((20, 10, 14, 14, 14, 10), start=1):
+    for index, width in enumerate((20, 14, 14, 10, 14), start=1):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
+    sheet.column_dimensions["E"].width = 14
+    for cell in sheet["E"][1:]:
+        cell.number_format = "yyyy-mm-dd"
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
 
-    attachment_path = RUN_LOG_DIR / f"{period}_scan_{scan_script}_{scan_date}.xlsx"
+    attachment_path = RUN_LOG_DIR / f"{period}_scan_{scan_date.replace('-', '')}.xlsx"
     workbook.save(attachment_path)
 
     subject = f"[{period.upper()} SCAN REPORT] {scan_script} {scan_date}"
     body_lines = [
         subject,
         "",
-        f"BUY signals: {len(buys)}",
-        f"SELL signals: {len(sells)}",
-        f"Total signals: {len(results)}",
+        f"BUY signals ({len(buys)})",
+        f"SELL signals ({len(sells)})",
     ]
     for row in buys:
         body_lines.append(
             f"BUY | {row.get('symbol', '')} | Date={row.get('date', '')} | "
-            f"Price={row.get('price', '')} | Supertrend={row.get('supertrend', '')} | "
-            f"RSI={row.get('rsi', '')}"
-        )
-    for row in sells:
-        body_lines.append(
-            f"SELL | {row.get('symbol', '')} | Date={row.get('date', '')} | "
             f"Price={row.get('price', '')} | Supertrend={row.get('supertrend', '')} | "
             f"RSI={row.get('rsi', '')}"
         )
@@ -1259,7 +1617,7 @@ def process_scan_results(script_name, output, script_config=None):
         f"<td>{row.get('supertrend', '')}</td>"
         f"<td>{row.get('rsi', '')}</td>"  # Add RSI value
         "</tr>"
-        for row in results if isinstance(row, dict)
+        for row in buys
     )
     html_body = (
         f"<h2>{subject}</h2>"

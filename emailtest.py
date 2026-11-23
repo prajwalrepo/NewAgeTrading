@@ -18,7 +18,7 @@ def main():
     body = (
         "Hi,\n\n"
         "This is a test email from emailtest.py.\n"
-        f"Sent at: {datetime.now().astimezone().isoformat(timespec='secons')}\n"
+        f"Sent at: {datetime.now().astimezone().isoformat(timespec='seconds')}\n"
     )
 
     if not scheduler.send_email_notification(subject, body, recipients=RECIPIENTS):

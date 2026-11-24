@@ -142,12 +142,12 @@
       "description": "Gold Mini Options Strategy (MCX)",
       "enabled": true,
       "run_days": ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
-      "run_days_of_month": [25, 26, 27],
+      "run_days_of_month": [24, 25, 26, 27],
       "run_time_start": "15:30",
       "run_time_end": "23:35",
       "api_delay_seconds": 45,
       "send_signal_emails": true,
-      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST on days 25-27 of the month; scheduler allows until 23:35 for square-off/report completion. Uses 3-minute candles; milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
+      "notes": "Runs Monday through Friday from 15:30 to 23:30 IST on days 24-27 of the month; scheduler allows until 23:35 for square-off/report completion. Uses 3-minute candles; milestone emails trigger at each 100-point move from entry or down from the running peak. Starts after OILMINI to reduce Groww API contention. Paper-only."
     },
 
     "NATGASMINI": {

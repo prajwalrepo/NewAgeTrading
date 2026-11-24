@@ -1391,7 +1391,14 @@ def email_trade_signal(config_key, trade, report_path=None):
     _ = config_key
     subject = _build_trade_email_subject(trade)
     body, html_body = _build_trade_email_content(trade)
-    send_email_notification(subject, body, attachment_path=report_path, html_body=html_body)
+    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
+    send_email_notification(
+        subject,
+        body,
+        attachment_path=report_path,
+        html_body=html_body,
+        recipients=recipients,
+    )
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -1437,7 +1444,8 @@ def process_price_milestone(config_key, output_line, script_config=None):
 
     subject = _build_price_milestone_subject(milestone)
     body, html_body = _build_price_milestone_content(milestone)
-    send_email_notification(subject, body, html_body=html_body)
+    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
 
 
 def process_trade_result(config_key, output_line, script_config=None):

@@ -47,11 +47,11 @@ CONFIG = {
     # Option series: keep the expiry list dynamic; do not hardcode a single option symbol.
     "option_symbols": [],
 
-    "future_expiry_fs": ["26AUG26", "25SEP26",  "27OCT26", "24NOV26","28DEC26","25JAN27"], 
-    "future_order_expiry": [ "26AUG", "25SEP", "27OCT", "24NOV", "28DEC", "25JAN" ],
+    "future_expiry_fs": [ "24NOV26","28DEC26","25JAN27"], 
+    "future_order_expiry": [ "24NOV", "28DEC", "25JAN" ],
 
-    "option_expiry_fs": [ "23Oct26", "20Nov26",  "23Dec26"   ],
-    "option_order_expiry": [  "23OCT","20NOV26", "23DEC"  ],
+    "option_expiry_fs": ["20Nov26",  "23Dec26" ,"21Jan27"  ],
+    "option_order_expiry": [ "20NOV26", "23DEC", "21JAN"],
     
     "strike_step": 5,
     "strike_start": 200,

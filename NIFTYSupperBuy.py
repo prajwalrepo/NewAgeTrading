@@ -27,8 +27,8 @@ CONFIG = {
     # Position sizing is bounded by both the allocation and this lot cap.
     "lot_size": 65,
     "max_lots_per_trade": 2,
-    "expiry_fs": ["19Oct26", "27Oct26", "03Nov26", "09Nov26", "17Nov26", "23Nov26"],
-    "order_expiry": ["26O19", "26OCT", "26N03", "26N09", "26N17", "26NOV"],
+    "expiry_fs": ["01Dec26", "08Dec26", "15Dec26", "22Dec26", "23Feb27", "25Jan27", "28Dec27", "29Dec26"],
+    "order_expiry": ["26D01CE", "26D08CE", "26D15CE", "26D22CE", "27FEBCE", "27JANCE", "27DECCE", "26DECCE"],
     "entry_window_start": "09:15",
     "entry_window_end": "15:10",
     "run_end_time": "15:30",

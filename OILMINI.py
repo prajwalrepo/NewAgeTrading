@@ -46,24 +46,23 @@ CONFIG = {
 
     "future_expiry_fs": [
         
-        "19NOV26",
-        "18DEC26",
+       
         "19JAN27",
+        "19FEB27",
     ],
     "future_order_expiry": [
        
-        "19NOV",
-        "18DEC",
+        
         "19JAN",
     ],
     "option_expiry_fs": [
-        
-        "17Nov26",
+                
         "16Dec26",
+        "15Jan27",
     ],
     "option_order_expiry": [
        
-        "17OCT",
+        
         "16NOV",
     ],
     "strike_step": 50,

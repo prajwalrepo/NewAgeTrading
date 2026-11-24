@@ -75,8 +75,8 @@ CONFIG = {
         "strike_step": 50,
         "strike_start": 20000,
         "strike_end": 28000,
-        "expiry_fs": ["19Oct26", "27Oct26", "03Nov26","09Nov26", "17Nov26", "23Nov26"],
-        "order_expiry": ["26O19", "26OCT", "26N03","26N09", "26N17", "26NOV"],
+        "expiry_fs": ["01Dec26", "08Dec26", "15Dec26", "22Dec26", "23Feb27", "25Jan27", "28Dec27", "29Dec26"],
+        "order_expiry": ["26D01CE", "26D08CE", "26D15CE", "26D22CE", "27FEBCE", "27JANCE", "27DECCE", "26DECCE"],
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 150.0,
         "stop_loss_percent": 30.0,
@@ -94,8 +94,8 @@ CONFIG = {
         "strike_step": 100,
         "strike_start": 60000,
         "strike_end": 80000,
-        "expiry_fs": ["22Oct26", "29Oct26", "05Nov26","12Nov26", "19Nov26", "26Nov26"],
-        "order_expiry": ["26O22", "26OCT", "26N05","26N12", "26N19", "26NOV"],
+        "expiry_fs": ["03Dec26", "10Dec26", "17Dec26", "24Dec26", "31Dec26", "26Nov26", "07Jan27", "30Dec27", "28Jan27", "24Jun27", "25Mar27"],
+        "order_expiry": ["26D03", "26D10", "26D17", "26D24", "26DEC", "26NOV", "27107", "27DEC", "27JAN", "27JUN", "27MAR"],
         # Per-leg profit and loss limits as a percentage of premium cost.
         "take_profit_percent": 200.0,
         "stop_loss_percent": 30.0,

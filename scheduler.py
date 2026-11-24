@@ -40,6 +40,7 @@ CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
 ENV_FILE = Path(__file__).parent / ".env"
 MONTHLY_REPORT_DIR = RUN_LOG_DIR / "monthly"
 MONTHLY_REPORT_DIR.mkdir(exist_ok=True)
+DEFAULT_SMTP_USERNAME = "gencinvestor@gmail.com"
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
@@ -200,9 +201,9 @@ CONFIG = {
         "smtp_host": "smtp.gmail.com",
         "smtp_port": 465,
         "use_ssl": True,
-        "smtp_username": "",
+        "smtp_username": DEFAULT_SMTP_USERNAME,
         "smtp_password": "",
-        "from_email": "",
+        "from_email": DEFAULT_SMTP_USERNAME,
         "to_emails": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
@@ -251,11 +252,8 @@ def load_env_file():
 
     email_cfg = CONFIG["email_notifications"]
     smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    smtp_username = os.getenv("SMTP_USERNAME", "").strip()
     if smtp_password:
         email_cfg["smtp_password"] = smtp_password
-    if smtp_username:
-        email_cfg["smtp_username"] = smtp_username
 
 
 def _normalize_run_day(day_value):
@@ -406,6 +404,7 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     recipients = recipients or email_cfg.get("to_emails") or []
     smtp_host = str(email_cfg.get("smtp_host", "") or "").strip()
     smtp_username = str(email_cfg.get("smtp_username", "") or "").strip()
+    smtp_username = smtp_username or DEFAULT_SMTP_USERNAME
     smtp_password = str(email_cfg.get("smtp_password", "") or "").strip()
     from_email = str(email_cfg.get("from_email", smtp_username) or smtp_username).strip()
     smtp_port = int(email_cfg.get("smtp_port", 465) or 465)

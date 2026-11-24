@@ -37,6 +37,32 @@ class SchedulerTradeSummaryTests(unittest.TestCase):
             },
         )
 
+    def test_email_uses_hardcoded_sender_username(self):
+        with (
+            patch.dict(
+                scheduler.CONFIG["email_notifications"],
+                {
+                    "enabled": True,
+                    "smtp_username": "",
+                    "smtp_password": "test-password",
+                    "from_email": "",
+                    "to_emails": ["recipient@example.com"],
+                },
+            ),
+            patch.object(scheduler.smtplib, "SMTP_SSL") as smtp_ssl,
+        ):
+            smtp = smtp_ssl.return_value.__enter__.return_value
+            sent = scheduler.send_email_notification("subject", "body")
+
+        self.assertTrue(sent)
+        smtp.login.assert_called_once_with(
+            scheduler.DEFAULT_SMTP_USERNAME, "test-password"
+        )
+        self.assertEqual(
+            smtp.send_message.call_args.args[0]["From"],
+            scheduler.DEFAULT_SMTP_USERNAME,
+        )
+
     def test_closed_position_does_not_block_a_new_entry(self):
         symbol = "CRUDEOILM-17Nov26-8000-CE"
         original_positions = OILMINI.positions

@@ -226,22 +226,6 @@ def _merge_dict(base, updates):
     for key, value in (updates or {}).items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             _merge_dict(base[key], value)
-        elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
-            body = (
-                f"{run_context['config_key']} completed\n"
-                f"Trading date: {trading_date}\n"
-                f"Stop reason: {reason}\n"
-                "No completed live or paper CE/PE trade outcomes were recorded.\n"
-                f"Excel report: {report_path.name}"
-            )
-        elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
-            body = (
-                f"{run_context['config_key']} completed\n"
-                f"Trading date: {trading_date}\n"
-                f"Stop reason: {reason}\n"
-                "No completed live or paper CE/PE trade outcomes were recorded.\n"
-                f"Excel report: {report_path.name}"
-            )
         else:
             base[key] = value
     return base

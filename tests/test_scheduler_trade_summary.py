@@ -14,6 +14,29 @@ import scheduler
 
 
 class SchedulerTradeSummaryTests(unittest.TestCase):
+    def test_merge_dict_recursively_applies_scheduler_overrides(self):
+        config = {
+            "email_notifications": {"enabled": False, "to_emails": []},
+            "check_interval_seconds": 60,
+        }
+
+        result = scheduler._merge_dict(
+            config,
+            {
+                "email_notifications": {"enabled": True},
+                "check_interval_seconds": 30,
+            },
+        )
+
+        self.assertIs(result, config)
+        self.assertEqual(
+            config,
+            {
+                "email_notifications": {"enabled": True, "to_emails": []},
+                "check_interval_seconds": 30,
+            },
+        )
+
     def test_closed_position_does_not_block_a_new_entry(self):
         symbol = "CRUDEOILM-17Nov26-8000-CE"
         original_positions = OILMINI.positions

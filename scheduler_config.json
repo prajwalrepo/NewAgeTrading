@@ -35,7 +35,7 @@
     "NIFTYIntra": {
       "script_name": "NIFTYIntra.py",
       "description": "NIFTY Intraday FNO Strategy Monday, Tuesday, and Friday with 3:15 PM IST square-off",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["MONDAY", "TUESDAY", "FRIDAY"],
       "run_time_start": "09:30",
       "run_time_end": "15:16",
@@ -47,7 +47,7 @@
     "SENSEXINTRA": {
       "script_name": "SENSEXINTRA.py",
       "description": "SENSEX Intraday FNO Strategy Wednesday and Thursday with 3:15 PM IST square-off",
-      "enabled": true,
+      "enabled": false,
       "run_days": ["WEDNESDAY", "THURSDAY"],
       "run_time_start": "09:30",
       "run_time_end": "15:16",

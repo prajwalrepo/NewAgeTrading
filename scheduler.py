@@ -71,7 +71,7 @@ SCRIPTS_SCHEDULE = {
     "NIFTYIntra": {
         "script_name": "NIFTYIntra.py",
         "description": "NIFTY Intraday FNO Strategy",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.FRIDAY],
         "run_time_start": "09:13",  # IST
         "run_time_end": "15:30",
@@ -82,7 +82,7 @@ SCRIPTS_SCHEDULE = {
     "SENSEXINTRA": {
         "script_name": "SENSEXINTRA.py",
         "description": "SENSEX Intraday FNO Strategy",
-        "enabled": True,
+        "enabled": False,
         "run_days": [DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY],
         "run_days_of_month": None,  # Every day of month
         "run_time_start": "09:12",
@@ -405,7 +405,7 @@ def cleanup_old_logs():
         logger.info(f"[LOG] Deleted {deleted_count} log file(s) older than {retention_days} day(s)")
 
 
-def send_email_notification(subject, body, attachment_path=None, html_body=None, recipients=None):
+def send_email_notification(subject, body, attachment_path=None, html_body=None, recipients=None, high_priority=False):
     """Send an email notification if SMTP is configured."""
     email_cfg = CONFIG.get("email_notifications", {})
     if not email_cfg.get("enabled", False):
@@ -430,6 +430,11 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     message["Subject"] = subject
     message["From"] = from_email
     message["To"] = ", ".join(recipients)
+    if high_priority:
+        message["X-Priority"] = "1"
+        message["X-MSMail-Priority"] = "High"
+        message["Importance"] = "high"
+
     message.set_content(body)
     if html_body:
         message.add_alternative(str(html_body), subtype="html")
@@ -446,6 +451,12 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
                     subtype=subtype,
                     filename=attachment.name,
                 )
+
+    # Add high-priority headers if flagged
+    if high_priority:
+        message["X-Priority"] = "1"
+        message["X-MSMail-Priority"] = "High"
+        message["Importance"] = "high"
 
     try:
         if email_cfg.get("use_ssl", True):
@@ -509,7 +520,7 @@ def stop_script(run_context, script_config, reason, terminate_process=True):
     exit_code = process.poll()
     final_log_path = finalize_run_log(run_context, ended_at, reason, exit_code=exit_code)
     logger.info(f"[STOPPED] {run_context['config_key']} stopped | Reason={reason} | ExitCode={exit_code} | Log={final_log_path.name}")
-    if reason != "Scheduler stopped by user":
+    if reason not in {"Scheduler stopped by user", "Process exited unexpectedly"}:
         email_daily_trade_summary(run_context, reason)
     return exit_code
 
@@ -594,6 +605,16 @@ def handle_process_state_changes(running_processes, script_launch_logged, blocke
             reason="Process exited unexpectedly",
             terminate_process=False,
         )
+        crash_subject = f"[SCRIPT CRASH] {config_key}"
+        crash_body = (
+            f"Script: {config_key}\n"
+            f"Exit code: {returncode}\n"
+            f"Failure: {failure_summary}\n"
+            f"Stopped at: {get_ist_time().strftime('%Y-%m-%d %H:%M:%S IST')}"
+        )
+        recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
+        send_email_notification(crash_subject, crash_body, recipients=recipients, high_priority=True)
+
         del running_processes[config_key]
         script_launch_logged.discard(config_key)
 
@@ -698,6 +719,7 @@ DAILY_SUMMARY_COLUMNS = (
 )
 TRADE_REPORT_LOCK = threading.Lock()
 PRICE_MILESTONE_EMAIL_GUARD = {}
+TRADE_EVENT_EMAIL_GUARD = {}
 
 
 def _initialize_trade_report_sheet(workbook):
@@ -858,66 +880,62 @@ def _build_trade_email_content(trade):
     real_order_text = "Yes" if trade.get("Order Placed", "NO") == "YES" else "No"
 
     lines = [
-        "Option trade signal",
-        "",
         f"Script name: {script_name}",
         f"Time: {_format_signal_time_short(trade.get('Time'))}",
+        f"Side: {side}",
         f"Strike: {trade.get('Strike', '')}",
-        f"Signal: {action_label}",
     ]
 
     if action_label == "BUY":
-        lines.append(f"Buy price: {_to_float_text(trade.get('Price'))}")
+        buy_price = _to_float_text(trade.get("Price"))
+        lines.extend([
+            f"Entry: {buy_price}",
+            "Signal: BUY",
+            f"Buy price: {buy_price}",
+            f"Quantity: {_to_int_text(trade.get('Qty'))}",
+            f"Real order: {real_order_text}",
+        ])
     else:
         entry_value = trade.get("Buy At") or trade.get("Entry") or ""
-        if entry_value:
-            lines.append(f"Entry: {_to_float_text(entry_value)}")
-        sell_value = trade.get("Sell At") or trade.get("Price")
-        lines.append(f"Sell price: {_to_float_text(sell_value)}")
-
-    lines.extend([
-        f"Side: {side}",
-        f"Quantity: {_to_int_text(trade.get('Qty'))}",
-        f"Real order: {real_order_text}",
-    ])
+        lines.extend([
+            f"Entry: {_to_float_text(entry_value)}" if entry_value else "Entry:",
+            "Signal: SELL",
+            f"Sell price: {_to_float_text(trade.get('Sell At') or trade.get('Price'))}",
+            f"Quantity: {_to_int_text(trade.get('Qty'))}",
+            f"Real order: {real_order_text}",
+        ])
 
     highest = trade.get("Highest Price")
     pnl = trade.get("PnL")
-    if action_label == "SELL":
-        lines.append(f"MA price recorded: {_to_float_text(highest)}" if highest else "MA price recorded:")
-        lines.append(f"PNL: {_to_int_text(pnl)}" if pnl else "PNL:")
 
     html_lines = [
-        "<p><strong>Option trade signal</strong></p>",
         "<table>",
         f"<tr><td>Script name</td><td>{script_name}</td></tr>",
         f"<tr><td>Time</td><td>{_format_signal_time_short(trade.get('Time'))}</td></tr>",
+        f"<tr><td>Side</td><td>{side}</td></tr>",
         f"<tr><td>Strike</td><td>{trade.get('Strike', '')}</td></tr>",
-        f"<tr><td>Signal</td><td><strong>{action_label}</strong></td></tr>",
     ]
 
     if action_label == "BUY":
-        html_lines.append(f"<tr><td>Buy price</td><td>{_to_float_text(trade.get('Price'))}</td></tr>")
+        buy_price = _to_float_text(trade.get("Price"))
+        html_lines.extend([
+            f"<tr><td>Entry</td><td>{buy_price}</td></tr>",
+            "<tr><td>Signal</td><td>BUY</td></tr>",
+            f"<tr><td>Buy price</td><td>{buy_price}</td></tr>",
+            f"<tr><td>Quantity</td><td>{_to_int_text(trade.get('Qty'))}</td></tr>",
+            f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
+        ])
     else:
         entry_value = trade.get("Buy At") or trade.get("Entry") or ""
-        if entry_value:
-            html_lines.append(f"<tr><td>Entry</td><td>{_to_float_text(entry_value)}</td></tr>")
-        sell_value = trade.get("Sell At") or trade.get("Price")
-        html_lines.append(f"<tr><td>Sell price</td><td>{_to_float_text(sell_value)}</td></tr>")
-
-    html_lines.extend([
-        f"<tr><td>Side</td><td>{side}</td></tr>",
-        f"<tr><td>Quantity</td><td>{_to_int_text(trade.get('Qty'))}</td></tr>",
-        f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
-    ])
-
-    if action_label == "SELL":
-        html_lines.append(
-            f"<tr><td>MA price recorded</td><td>{_to_float_text(highest)}</td></tr>" if highest else "<tr><td>MA price recorded</td><td></td></tr>"
-        )
-        html_lines.append(
-            f"<tr><td>PNL</td><td>{_to_int_text(pnl)}</td></tr>" if pnl else "<tr><td>PNL</td><td></td></tr>"
-        )
+        html_lines.extend([
+            f"<tr><td>Entry</td><td>{_to_float_text(entry_value)}</td></tr>",
+            "<tr><td>Signal</td><td>SELL</td></tr>",
+            f"<tr><td>Sell price</td><td>{_to_float_text(trade.get('Sell At') or trade.get('Price'))}</td></tr>",
+            f"<tr><td>Quantity</td><td>{_to_int_text(trade.get('Qty'))}</td></tr>",
+            f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
+            f"<tr><td>MA price recorded</td><td>{_to_float_text(highest)}</td></tr>",
+            f"<tr><td>PNL</td><td>{_to_int_text(pnl)}</td></tr>",
+        ])
 
     html_lines.append("</table>")
     return "\n".join(lines), "\n".join(html_lines)
@@ -926,10 +944,14 @@ def _build_trade_email_content(trade):
 def _build_price_milestone_subject(milestone):
     move_text = _to_float_text(milestone.get("Move"))
     direction = milestone.get("Direction", "NA")
+    try:
+        action = "BUY" if float(milestone.get("Move") or 0) >= 0 else "SELL"
+    except (TypeError, ValueError):
+        action = "BUY"
     return (
         f"[PRICE MOVE] {milestone.get('Script')} Option "
-        f"{move_text} points ({direction}) - {milestone.get('Side')} "
-        f"{milestone.get('Symbol')} at {milestone.get('Time')}"
+        f"{move_text} points ({direction}) - {action} "
+        f"{milestone.get('Side')} {milestone.get('Strike')} at {milestone.get('Time')}"
     )
 
 
@@ -938,60 +960,44 @@ def _build_price_milestone_content(milestone):
     real_order_text = "Yes" if milestone.get("Order Placed", "NO") == "YES" else "No"
     move_raw = str(milestone.get("Move", "") or "")
     move_text = _to_float_text(move_raw)
+    try:
+        action = "BUY" if float(move_raw) >= 0 else "SELL"
+    except (TypeError, ValueError):
+        action = "BUY"
     if move_raw.startswith("+"):
         move_text = f"+{_to_float_text(abs(float(move_raw)))}"
     elif move_raw.startswith("-"):
         move_text = f"-{_to_float_text(abs(float(move_raw)))}"
     elif not move_raw.startswith("+"):
-        move_text = f"+{move_text}"
-    price_move_text = f"{move_text} points ({milestone.get('Direction', 'NA')})"
+        move_text = f"+{move_text}" if action == "BUY" else f"-{move_text}"
 
     lines = [
-        "Option price milestone",
-        "",
         f"Script name: {script_name}",
         f"Time: {milestone.get('Time')}",
-        f"Strike: {milestone.get('Strike')}",
         f"Side: {milestone.get('Side')}",
-        "Signal: PRICE MOVE",
+        f"Strike: {milestone.get('Strike')}",
         f"Entry: {_to_float_text(milestone.get('Entry'))}",
-        f"Current premium: {_to_float_text(milestone.get('Price'))}",
+        f"Current price: {_to_float_text(milestone.get('Price'))}",
+        f"Signal: {action}",
         f"Quantity: {_to_int_text(milestone.get('Qty'))}",
         f"Real order: {real_order_text}",
-        f"Price move: {price_move_text}",
+        f"Price move: {move_text} points",
     ]
 
-    peak = milestone.get("Peak")
-    retracement_text = ""
-    if peak:
-        try:
-            retracement_text = _to_float_text(float(peak) - float(milestone.get("Price")))
-        except (TypeError, ValueError):
-            retracement_text = ""
-    if retracement_text:
-        lines.append(f"Retracement from peak: {retracement_text} (peak {peak})")
-
     html_lines = [
-        "<p><strong>Option price milestone</strong></p>",
         "<table>",
         f"<tr><td>Script name</td><td>{script_name}</td></tr>",
         f"<tr><td>Time</td><td>{milestone.get('Time')}</td></tr>",
+        f"<tr><td>Side</td><td>{milestone.get('Side')}</td></tr>",
         f"<tr><td>Strike</td><td>{milestone.get('Strike')}</td></tr>",
-        "<tr><td>Signal</td><td>PRICE MOVE</td></tr>",
         f"<tr><td>Entry</td><td>{_to_float_text(milestone.get('Entry'))}</td></tr>",
-        f"<tr><td>Current premium</td><td>{_to_float_text(milestone.get('Price'))}</td></tr>",
+        f"<tr><td>Current price</td><td>{_to_float_text(milestone.get('Price'))}</td></tr>",
+        f"<tr><td>Signal</td><td>{action}</td></tr>",
         f"<tr><td>Quantity</td><td>{_to_int_text(milestone.get('Qty'))}</td></tr>",
         f"<tr><td>Real order</td><td>{real_order_text}</td></tr>",
-        f"<tr><td>Price move</td><td><strong>{move_text} points</strong> "
-        f"({milestone.get('Direction', 'NA')})</td></tr>",
+        f"<tr><td>Price move</td><td>{move_text} points</td></tr>",
+        "</table>",
     ]
-
-    if retracement_text:
-        html_lines.append(
-            f"<tr><td>Retracement from peak</td><td>{retracement_text} (peak {peak})</td></tr>"
-        )
-
-    html_lines.append("</table>")
     return "\n".join(lines), "\n".join(html_lines)
 
 
@@ -1409,7 +1415,8 @@ def email_trade_signal(config_key, trade, report_path=None):
     _ = config_key
     subject = _build_trade_email_subject(trade)
     body, html_body = _build_trade_email_content(trade)
-    send_email_notification(subject, body, attachment_path=report_path, html_body=html_body)
+    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients, high_priority=True)
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -1422,9 +1429,25 @@ def process_trade_signal(config_key, output_line, script_config=None):
     except Exception as exc:
         logger.error(f"[REPORT] Failed to record trade signal for {config_key}: {exc}")
         return
+
+    dedupe_key = (
+        str(trade.get("Script") or config_key).upper(),
+        str(trade.get("Symbol") or ""),
+        str(trade.get("Side") or ""),
+        str(trade.get("Time") or ""),
+        str(trade.get("Strike") or ""),
+        str(trade.get("Price") or ""),
+    )
+    if TRADE_EVENT_EMAIL_GUARD.get(dedupe_key):
+        return
+
     send_on_signals = CONFIG.get("email_notifications", {}).get("send_on_signals", False)
     script_emails_enabled = not script_config or script_config.get("send_signal_emails", True)
     if (is_new or str(trade.get("Reason", "")) == "Trade result") and send_on_signals and script_emails_enabled:
+        TRADE_EVENT_EMAIL_GUARD[dedupe_key] = True
+        if len(TRADE_EVENT_EMAIL_GUARD) > 5000:
+            for old_key in list(TRADE_EVENT_EMAIL_GUARD.keys())[:1000]:
+                TRADE_EVENT_EMAIL_GUARD.pop(old_key, None)
         email_trade_signal(config_key, trade, report_path)
 
 
@@ -1455,7 +1478,8 @@ def process_price_milestone(config_key, output_line, script_config=None):
 
     subject = _build_price_milestone_subject(milestone)
     body, html_body = _build_price_milestone_content(milestone)
-    send_email_notification(subject, body, html_body=html_body)
+    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
+    send_email_notification(subject, body, html_body=html_body, recipients=recipients, high_priority=True)
 
 
 def process_trade_result(config_key, output_line, script_config=None):
@@ -1690,6 +1714,7 @@ def launch_script(script_name, config_key):
         script_config = SCRIPTS_SCHEDULE.get(config_key, {})
         output_thread = threading.Thread(
             target=capture_script_output,
+                                                                                        
             args=(config_key, process, run_log_path, run_context, script_config),
             daemon=True
         )
@@ -1710,15 +1735,21 @@ def log_startup_status():
     logger.info("=" * 80)
     logger.info(f"[SCHEDULER] Started at {now.strftime('%Y-%m-%d %H:%M:%S IST')}")
     logger.info(f"[MODE] {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
-    logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} configured")
-    logger.info(f"[LOG_RETENTION] {CONFIG.get('log_retention_days', 2)} day(s)")
+    logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} scripts configured")
+    for key, config in SCRIPTS_SCHEDULE.items():
+        logger.info(f"  - {key}: {'ENABLED' if config.get('enabled') else 'DISABLED'}")
+    
     email_cfg = CONFIG.get("email_notifications", {})
-    smtp_configured = bool(
-        email_cfg.get("enabled", False)
-        and email_cfg.get("smtp_username", "")
-        and email_cfg.get("smtp_password", "")
-    )
-    logger.info(f"[EMAIL] {'Configured' if smtp_configured else 'Not configured'}")
+    if email_cfg.get("enabled") and email_cfg.get("smtp_username") and email_cfg.get("smtp_password"):
+        logger.info("[EMAIL] SMTP credentials loaded")
+        # Test email sending
+        send_email_notification(
+            "Scheduler Startup Test",
+            "If you can read this, the scheduler has started successfully.",
+            recipients=["basappafamily6@gmail.com"],
+        )
+    else:
+        logger.warning("[EMAIL] Scheduler startup email skipped; SMTP credentials are not configured")
     logger.info("=" * 80)
 
 
@@ -1796,164 +1827,3 @@ def scheduler_loop():
             logger.info(f"[STOP] Terminating {config_key}...")
             stop_script(run_context, SCRIPTS_SCHEDULE[config_key], reason="Scheduler stopped by user")
         sys.exit(0)
-
-
-# ============================================================================
-# CLI and Configuration Management
-# ============================================================================
-
-def print_schedule():
-    """Print the configured schedule in a readable format"""
-    print("\n" + "=" * 80)
-    print("[SCHEDULE] CONFIGURED SCHEDULE")
-    print("=" * 80)
-    
-    for config_key, script_config in SCRIPTS_SCHEDULE.items():
-        status = "[OK] ENABLED" if script_config.get("enabled") else "[ERROR] DISABLED"
-        day_names = []
-        for day in script_config.get("run_days", []):
-            if isinstance(day, DayOfWeek):
-                day_names.append(day.name)
-            else:
-                day_names.append(str(day))
-        days = ", ".join(day_names)
-        start = script_config.get("run_time_start", "N/A")
-        end = script_config.get("run_time_end", "N/A")
-        delay = script_config.get("api_delay_seconds", 0)
-        days_of_month = script_config.get("run_days_of_month")
-        
-        print(f"\n{config_key:20} {status}")
-        print(f"  Script:  {script_config.get('script_name')}")
-        print(f"  Desc:    {script_config.get('description')}")
-        print(f"  Days:    {days}")
-        
-        # Show day-of-month info if configured
-        if days_of_month is not None:
-            if isinstance(days_of_month, list) and len(days_of_month) > 0:
-                # Show specific days of month
-                print(f"  Of Month: Days {min(days_of_month)}-{max(days_of_month)}")
-            else:
-                print(f"  Of Month: Every day")
-        else:
-            print(f"  Of Month: Every day")
-        
-        print(f"  Time:    {start} - {end} IST")
-        if delay > 0:
-            print(f"  Delay:   {delay} seconds (before API call)")
-    
-    print("\n" + "=" * 80)
-    print(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
-    email_cfg = CONFIG.get("email_notifications", {})
-    print(f"Email: {'ENABLED' if email_cfg.get('enabled') else 'DISABLED'}")
-    print("=" * 80 + "\n")
-
-
-def modify_schedule(script_key, days=None, start_time=None, end_time=None, enabled=None):
-    """Modify schedule for a specific script"""
-    if script_key not in SCRIPTS_SCHEDULE:
-        logger.error(f"Script '{script_key}' not found in schedule")
-        return False
-    
-    config = SCRIPTS_SCHEDULE[script_key]
-    
-    if days is not None:
-        config["run_days"] = days
-        logger.info(f"Updated {script_key} run days: {[d.name for d in days]}")
-    
-    if start_time is not None:
-        config["run_time_start"] = start_time
-        logger.info(f"Updated {script_key} start time: {start_time}")
-    
-    if end_time is not None:
-        config["run_time_end"] = end_time
-        logger.info(f"Updated {script_key} end time: {end_time}")
-    
-    if enabled is not None:
-        config["enabled"] = enabled
-        logger.info(f"Updated {script_key} enabled: {enabled}")
-    
-    return True
-
-
-# ============================================================================
-# MAIN ENTRY POINT
-# ============================================================================
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(
-        description="Central Scheduler for Stock Scanner Scripts",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python scheduler.py                    # Run in live mode
-  python scheduler.py --dry-run         # Test without sending broker requests
-  python scheduler.py --show-schedule    # Display configured schedule
-  python scheduler.py --logs             # Show log directory
-        """
-    )
-    
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Run in dry-run mode (no broker requests sent)"
-    )
-    
-    parser.add_argument(
-        "--show-schedule",
-        action="store_true",
-        help="Display the current schedule and exit"
-    )
-    
-    parser.add_argument(
-        "--logs",
-        action="store_true",
-        help="Show log file location and exit"
-    )
-    
-    parser.add_argument(
-        "--disable-script",
-        type=str,
-        help="Disable a specific script (e.g., NIFTY)"
-    )
-    
-    parser.add_argument(
-        "--enable-script",
-        type=str,
-        help="Enable a specific script"
-    )
-    
-    args = parser.parse_args()
-    load_scheduler_config()
-    
-    # Handle CLI arguments
-    if args.dry_run:
-        CONFIG["dry_run"] = True
-        logger.info("[DRY_RUN] DRY RUN MODE ENABLED - No broker requests will be sent")
-    
-    if args.show_schedule:
-        print_schedule()
-        sys.exit(0)
-    
-    if args.logs:
-        print(f"\n[LOG_DIR] Log directory: {LOG_DIR}")
-        print(f"[LOG_FILE] Current log: {log_file}\n")
-        sys.exit(0)
-    
-    if args.disable_script:
-        if args.disable_script in SCRIPTS_SCHEDULE:
-            SCRIPTS_SCHEDULE[args.disable_script]["enabled"] = False
-            logger.info(f"Disabled: {args.disable_script}")
-        else:
-            logger.error(f"Script not found: {args.disable_script}")
-    
-    if args.enable_script:
-        if args.enable_script in SCRIPTS_SCHEDULE:
-            SCRIPTS_SCHEDULE[args.enable_script]["enabled"] = True
-            logger.info(f"Enabled: {args.enable_script}")
-        else:
-            logger.error(f"Script not found: {args.enable_script}")
-    
-    # Start the main scheduler
-    scheduler_loop()

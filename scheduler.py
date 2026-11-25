@@ -40,7 +40,6 @@ CONFIG_FILE = Path(__file__).parent / "scheduler_config.json"
 ENV_FILE = Path(__file__).parent / ".env"
 MONTHLY_REPORT_DIR = RUN_LOG_DIR / "monthly"
 MONTHLY_REPORT_DIR.mkdir(exist_ok=True)
-DEFAULT_SMTP_USERNAME = "gencinvestor@gmail.com"
 
 log_file = LOG_DIR / f"scheduler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 logging.basicConfig(
@@ -162,8 +161,8 @@ SCRIPTS_SCHEDULE = {
         "description": "Daily Yahoo Finance Supertrend scanner",
         "enabled": True,
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_time_start": "23:59",
-        "run_time_end": "23:59",
+        "run_time_start": "23:00",
+        "run_time_end": "23:05",
         "run_once_per_window": True,
         "api_delay_seconds": 0,
         "send_signal_emails": True,
@@ -175,8 +174,8 @@ SCRIPTS_SCHEDULE = {
         "description": "Weekly Yahoo Finance Supertrend scanner",
         "enabled": True,
         "run_days": [DayOfWeek.FRIDAY],
-        "run_time_start": "23:59",
-        "run_time_end": "23:59",
+        "run_time_start": "23:00",
+        "run_time_end": "23:05",
         "run_once_per_window": True,
         "api_delay_seconds": 0,
         "send_signal_emails": True,
@@ -201,9 +200,9 @@ CONFIG = {
         "smtp_host": "smtp.gmail.com",
         "smtp_port": 465,
         "use_ssl": True,
-        "smtp_username": DEFAULT_SMTP_USERNAME,
+        "smtp_username": "",
         "smtp_password": "",
-        "from_email": DEFAULT_SMTP_USERNAME,
+        "from_email": "",
         "to_emails": [],
         "send_on_signals": False,
         "send_daily_summary_on_stop": True,
@@ -233,27 +232,38 @@ def _merge_dict(base, updates):
 
 
 def load_env_file():
-    """Load private SMTP and broker credentials from the project .env file."""
-    if not ENV_FILE.exists():
-        return
-    try:
-        with ENV_FILE.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and not os.getenv(key):
-                    os.environ[key] = value
-    except Exception as exc:
-        logger.error(f"[CONFIG] Failed to read {ENV_FILE.name}: {exc}")
+    """Load private SMTP and broker credentials from .env or process environment."""
+    if ENV_FILE.exists():
+        try:
+            with ENV_FILE.open("r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key and not os.getenv(key):
+                        os.environ[key] = value
+        except Exception as exc:
+            logger.error(f"[CONFIG] Failed to read {ENV_FILE.name}: {exc}")
 
     email_cfg = CONFIG["email_notifications"]
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_password = (
+        os.getenv("SMTP_PASSWORD", "").strip()
+        or os.getenv("GMAIL_APP_PASSWORD", "").strip()
+        or os.getenv("EMAIL_PASSWORD", "").strip()
+        or os.getenv("SMTP_APP_PASSWORD", "").strip()
+    )
+    smtp_username = (
+        os.getenv("SMTP_USERNAME", "").strip()
+        or os.getenv("GMAIL_USERNAME", "").strip()
+        or os.getenv("EMAIL_USERNAME", "").strip()
+    )
     if smtp_password:
         email_cfg["smtp_password"] = smtp_password
+    if smtp_username:
+        email_cfg["smtp_username"] = smtp_username
 
 
 def _normalize_run_day(day_value):
@@ -404,7 +414,6 @@ def send_email_notification(subject, body, attachment_path=None, html_body=None,
     recipients = recipients or email_cfg.get("to_emails") or []
     smtp_host = str(email_cfg.get("smtp_host", "") or "").strip()
     smtp_username = str(email_cfg.get("smtp_username", "") or "").strip()
-    smtp_username = smtp_username or DEFAULT_SMTP_USERNAME
     smtp_password = str(email_cfg.get("smtp_password", "") or "").strip()
     from_email = str(email_cfg.get("from_email", smtp_username) or smtp_username).strip()
     smtp_port = int(email_cfg.get("smtp_port", 465) or 465)
@@ -618,6 +627,16 @@ def monitored_sleep(seconds, running_processes, script_launch_logged, blocked_fa
         if remaining <= 0:
             break
         time.sleep(min(1.0, remaining))
+
+
+def get_run_window_key(script_config):
+    """Build a stable key for a one-shot daily run window."""
+    now = get_ist_time()
+    return (
+        now.date().isoformat(),
+        str(script_config.get("run_time_start", "00:00")),
+        str(script_config.get("run_time_end", "23:59")),
+    )
 
 
 def should_script_run_now(script_config):
@@ -1133,7 +1152,6 @@ def _format_month_key(iso_or_text):
         return get_ist_time().strftime("%b").upper()
 
 
-
 def _trade_rows_text(rows, columns=None):
     if columns is None:
         columns = LEGACY_TRADE_REPORT_COLUMNS
@@ -1331,7 +1349,7 @@ def email_daily_trade_summary(run_context, reason):
         body_lines.append("")
         body_lines.append(f"Excel report: {report_path.name}")
         body = "\n".join(body_lines)
-    elif config_key in {"320TRADE", "NIFTYSUPPERBUY", "SENSEXSUPPERBUY"}:
+    elif config_key in {"320TRADE", "NIFTYSUPERBUY", "SENSEXSUPERBUY"}:
         body = (
             f"{run_context['config_key']} completed\n"
             f"Trading date: {trading_date}\n"
@@ -1391,14 +1409,7 @@ def email_trade_signal(config_key, trade, report_path=None):
     _ = config_key
     subject = _build_trade_email_subject(trade)
     body, html_body = _build_trade_email_content(trade)
-    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
-    send_email_notification(
-        subject,
-        body,
-        attachment_path=report_path,
-        html_body=html_body,
-        recipients=recipients,
-    )
+    send_email_notification(subject, body, attachment_path=report_path, html_body=html_body)
 
 
 def process_trade_signal(config_key, output_line, script_config=None):
@@ -1444,8 +1455,7 @@ def process_price_milestone(config_key, output_line, script_config=None):
 
     subject = _build_price_milestone_subject(milestone)
     body, html_body = _build_price_milestone_content(milestone)
-    recipients = CONFIG.get("email_notifications", {}).get("signal_recipients")
-    send_email_notification(subject, body, html_body=html_body, recipients=recipients)
+    send_email_notification(subject, body, html_body=html_body)
 
 
 def process_trade_result(config_key, output_line, script_config=None):
@@ -1702,32 +1712,39 @@ def log_startup_status():
     logger.info(f"[MODE] {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
     logger.info(f"[SCRIPTS] {len(SCRIPTS_SCHEDULE)} configured")
     logger.info(f"[LOG_RETENTION] {CONFIG.get('log_retention_days', 2)} day(s)")
-    email_enabled = CONFIG.get("email_notifications", {}).get("enabled", False)
-    logger.info(f"[EMAIL] {'Enabled' if email_enabled else 'Disabled'}")
+    email_cfg = CONFIG.get("email_notifications", {})
+    smtp_configured = bool(
+        email_cfg.get("enabled", False)
+        and email_cfg.get("smtp_username", "")
+        and email_cfg.get("smtp_password", "")
+    )
+    logger.info(f"[EMAIL] {'Configured' if smtp_configured else 'Not configured'}")
     logger.info("=" * 80)
 
 
 def scheduler_loop():
     """Main scheduler loop - runs continuously"""
     log_startup_status()
-    
-    running_processes = {}  # {config_key: run_context}
-    script_launch_logged = set()  # Track if we already logged for a script
-    blocked_failures = {}  # {config_key: {signature, summary, blocked_at}}
-    
+
+    running_processes = {}
+    script_launch_logged = set()
+    launched_run_windows = set()
+    blocked_failures = {}
+
     try:
         while True:
-            now = get_ist_time()
             cleanup_old_logs()
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
-            
-            # Check each script
+
             for config_key, script_config in SCRIPTS_SCHEDULE.items():
                 clear_failure_block_if_needed(config_key, script_config, blocked_failures)
                 should_run = should_script_run_now(script_config)
                 is_running = config_key in running_processes and running_processes[config_key]["process"].poll() is None
-                
+
                 if should_run and not is_running:
+                    run_window_key = get_run_window_key(script_config)
+                    if script_config.get("run_once_per_window") and run_window_key in launched_run_windows:
+                        continue
                     if config_key in blocked_failures:
                         continue
 
@@ -1736,9 +1753,6 @@ def scheduler_loop():
                         logger.info(f"[SKIP] {config_key} not started because {conflicting_script} is already running")
                         continue
 
-                    # Script should run but isn't running - start it
-                    
-                    # Calculate delay for this script (to avoid rate limiting)
                     delay_sec = script_config.get("api_delay_seconds", 0)
                     if delay_sec > 0:
                         logger.info(f"[DELAY] Waiting {delay_sec}s before {config_key}...")
@@ -1749,41 +1763,35 @@ def scheduler_loop():
                         continue
                     if config_key in running_processes and running_processes[config_key]["process"].poll() is None:
                         continue
+
                     conflicting_script = get_conflicting_running_script(config_key, script_config, running_processes)
                     if conflicting_script is not None:
                         logger.info(f"[SKIP] {config_key} not started because {conflicting_script} is already running")
                         continue
-                    
-                    # Launch the script
-                    process = launch_script(
-                        script_config["script_name"],
-                        config_key
-                    )
+
+                    process = launch_script(script_config["script_name"], config_key)
                     if process:
                         running_processes[config_key] = process
                         script_launch_logged.add(config_key)
-                
+                        if script_config.get("run_once_per_window"):
+                            launched_run_windows.add(run_window_key)
+
                 elif not should_run and is_running:
-                    # Script shouldn't run but is still running - stop it
                     logger.info(f"[STOP] Stopping {config_key} (trading hours ended)")
                     stop_script(running_processes[config_key], script_config, reason="Trading window ended")
                     del running_processes[config_key]
                     script_launch_logged.discard(config_key)
                     blocked_failures.pop(config_key, None)
-                
+
                 elif not should_run and config_key in script_launch_logged:
-                    # Just mark that we've logged the launch
                     script_launch_logged.discard(config_key)
                     blocked_failures.pop(config_key, None)
-            
+
             handle_process_state_changes(running_processes, script_launch_logged, blocked_failures)
-            
-            # Sleep before next check
             monitored_sleep(CONFIG["check_interval_seconds"], running_processes, script_launch_logged, blocked_failures)
-    
+
     except KeyboardInterrupt:
         logger.info("[STOP] Scheduler stopped by user")
-        # Gracefully shutdown all running scripts
         for config_key, run_context in list(running_processes.items()):
             logger.info(f"[STOP] Terminating {config_key}...")
             stop_script(run_context, SCRIPTS_SCHEDULE[config_key], reason="Scheduler stopped by user")
@@ -1880,7 +1888,7 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   python scheduler.py                    # Run in live mode
-  python scheduler.py --dry-run         # Test without broker calls
+  python scheduler.py --dry-run         # Test without sending broker requests
   python scheduler.py --show-schedule    # Display configured schedule
   python scheduler.py --logs             # Show log directory
         """

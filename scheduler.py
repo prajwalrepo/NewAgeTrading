@@ -1827,3 +1827,160 @@ def scheduler_loop():
             logger.info(f"[STOP] Terminating {config_key}...")
             stop_script(run_context, SCRIPTS_SCHEDULE[config_key], reason="Scheduler stopped by user")
         sys.exit(0)
+
+
+def print_schedule():
+    """Print the configured schedule in a readable format"""
+    print("\n" + "=" * 80)
+    print("[SCHEDULE] CONFIGURED SCHEDULE")
+    print("=" * 80)
+    
+    for config_key, script_config in SCRIPTS_SCHEDULE.items():
+        status = "[OK] ENABLED" if script_config.get("enabled") else "[ERROR] DISABLED"
+        day_names = []
+        for day in script_config.get("run_days", []):
+            if isinstance(day, DayOfWeek):
+                day_names.append(day.name)
+            else:
+                day_names.append(str(day))
+        days = ", ".join(day_names)
+        start = script_config.get("run_time_start", "N/A")
+        end = script_config.get("run_time_end", "N/A")
+        delay = script_config.get("api_delay_seconds", 0)
+        days_of_month = script_config.get("run_days_of_month")
+        
+        print(f"\n{config_key:20} {status}")
+        print(f"  Script:  {script_config.get('script_name')}")
+        print(f"  Desc:    {script_config.get('description')}")
+        print(f"  Days:    {days}")
+        
+        # Show day-of-month info if configured
+        if days_of_month is not None:
+            if isinstance(days_of_month, list) and len(days_of_month) > 0:
+                # Show specific days of month
+                print(f"  Of Month: Days {min(days_of_month)}-{max(days_of_month)}")
+            else:
+                print(f"  Of Month: Every day")
+        else:
+            print(f"  Of Month: Every day")
+        
+        print(f"  Time:    {start} - {end} IST")
+        if delay > 0:
+            print(f"  Delay:   {delay} seconds (before API call)")
+    
+    print("\n" + "=" * 80)
+    print(f"Mode: {'DRY RUN' if CONFIG['dry_run'] else 'LIVE'}")
+    email_cfg = CONFIG.get("email_notifications", {})
+    print(f"Email: {'ENABLED' if email_cfg.get('enabled') else 'DISABLED'}")
+    print("=" * 80 + "\n")
+
+
+def modify_schedule(script_key, days=None, start_time=None, end_time=None, enabled=None):
+    """Modify schedule for a specific script"""
+    if script_key not in SCRIPTS_SCHEDULE:
+        logger.error(f"Script '{script_key}' not found in schedule")
+        return False
+    
+    config = SCRIPTS_SCHEDULE[script_key]
+    
+    if days is not None:
+        config["run_days"] = days
+        logger.info(f"Updated {script_key} run days: {[d.name for d in days]}")
+    
+    if start_time is not None:
+        config["run_time_start"] = start_time
+        logger.info(f"Updated {script_key} start time: {start_time}")
+    
+    if end_time is not None:
+        config["run_time_end"] = end_time
+        logger.info(f"Updated {script_key} end time: {end_time}")
+    
+    if enabled is not None:
+        config["enabled"] = enabled
+        logger.info(f"Updated {script_key} enabled: {enabled}")
+    
+    return True
+
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Central Scheduler for Stock Scanner Scripts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scheduler.py                    # Run in live mode
+  python scheduler.py --dry-run         # Test without broker calls
+  python scheduler.py --show-schedule    # Display configured schedule
+  python scheduler.py --logs             # Show log directory
+        """
+    )
+    
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run in dry-run mode (no broker requests sent)"
+    )
+    
+    parser.add_argument(
+        "--show-schedule",
+        action="store_true",
+        help="Display the current schedule and exit"
+    )
+    
+    parser.add_argument(
+        "--logs",
+        action="store_true",
+        help="Show log file location and exit"
+    )
+    
+    parser.add_argument(
+        "--disable-script",
+        type=str,
+        help="Disable a specific script (e.g., NIFTY)"
+    )
+    
+    parser.add_argument(
+        "--enable-script",
+        type=str,
+        help="Enable a specific script"
+    )
+    
+    args = parser.parse_args()
+    load_scheduler_config()
+    
+    # Handle CLI arguments
+    if args.dry_run:
+        CONFIG["dry_run"] = True
+        logger.info("[DRY_RUN] DRY RUN MODE ENABLED - No broker requests will be sent")
+    
+    if args.show_schedule:
+        print_schedule()
+        sys.exit(0)
+    
+    if args.logs:
+        print(f"\n[LOG_DIR] Log directory: {LOG_DIR}")
+        print(f"[LOG_FILE] Current log: {log_file}\n")
+        sys.exit(0)
+    
+    if args.disable_script:
+        if args.disable_script in SCRIPTS_SCHEDULE:
+            SCRIPTS_SCHEDULE[args.disable_script]["enabled"] = False
+            logger.info(f"Disabled: {args.disable_script}")
+        else:
+            logger.error(f"Script not found: {args.disable_script}")
+    
+    if args.enable_script:
+        if args.enable_script in SCRIPTS_SCHEDULE:
+            SCRIPTS_SCHEDULE[args.enable_script]["enabled"] = True
+            logger.info(f"Enabled: {args.enable_script}")
+        else:
+            logger.error(f"Script not found: {args.enable_script}")
+    
+    # Start the main scheduler
+    scheduler_loop()

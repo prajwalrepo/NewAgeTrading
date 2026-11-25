@@ -109,7 +109,7 @@ SCRIPTS_SCHEDULE = {
         "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": list(range(9, 21)),  # 9th to 20th of every month
+        "run_days_of_month": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 30],
         "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
         "api_delay_seconds": 10,  # Start 60 sec after NIFTY
@@ -123,7 +123,7 @@ SCRIPTS_SCHEDULE = {
         "exclusive_group": "MCX_COMMODITY",
         "run_days": [DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY],
-        "run_days_of_month": None,  # Every day of the month
+        "run_days_of_month": [17, 18, 19, 20, 21, 22, 23],
         "run_time_start": "16:00",
         "run_time_end": "23:30",  # MCX trades longer
         "api_delay_seconds": 10,  # Start 90 sec after NIFTY
